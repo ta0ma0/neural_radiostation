@@ -1,7 +1,35 @@
 <ezstream>
-    <url>http://localhost:8000/djalyx</url>
-    <sourcepassword>ice1984@Ocean</sourcepassword>
-    <format>MP3</format>
-    <filename>stdin</filename>
-    <stream_once>1</stream_once>
+  <servers>
+    <server>
+      <name>default</name>
+      <!-- Данные из вашего URL: http://source:ice1984Ocean@localhost:8000/djalyx -->
+      <hostname>localhost</hostname>
+      <port>8000</port>
+      <password>ice1984Ocean</password>
+      <user>source</user>
+    </server>
+  </servers>
+
+  <streams>
+    <stream>
+      <name>default</name>
+      <mountpoint>/djalyx</mountpoint>
+      <format>MP3</format>
+      <stream_name>DJ Alyx Radio</stream_name>
+      <stream_url>http://localhost:8000</stream_url>
+      <stream_genre>Electronic</stream_genre>
+      <stream_description>Cyber Radio by DJ Alyx</stream_description>
+      <stream_bitrate>192</stream_bitrate>
+      <stream_public>No</stream_public>
+      <reconnect_attempts>5</reconnect_attempts>
+    </stream>
+  </streams>
+
+    <intakes>
+    <intake>
+      <name>default</name>
+      <type>stdin</type> <!-- Измените playlist на stdin -->
+    </intake>
+  </intakes>
+
 </ezstream>
