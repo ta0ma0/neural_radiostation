@@ -1,0 +1,7 @@
+<ezstream>
+    <url>http://localhost:8000/djalyx</url>
+    <sourcepassword>ice1984@Ocean</sourcepassword>
+    <format>MP3</format>
+    <filename>stdin</filename>
+    <stream_once>1</stream_once>
+</ezstream>
