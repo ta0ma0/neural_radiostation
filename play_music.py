@@ -39,18 +39,28 @@ JINGLES_DIR = "/home/ruslan/Develop/Music/dj_alyx/jingles/"
 
 class CyberRadio:
     def __init__(self):
-        self.current_track = None
         self.is_running = True
-        self.track_counter = 1
-        self.announced_artists = set()
-        self.tracks_since_last_speech = 5
+        self.playlist = []  # Теперь тут строгая очередь (FIFO)
 
-        # Очередь и флаги
         self.speech_buffer = None
         self.is_generating = False
 
-        # Параметры вещания
-        self.ezstream_proc = None
+        # Master-процесс FFmpeg
+        self.master_stream = None
+        safe_pass = quote("ice1984Ocean", safe="")
+        self.icecast_url = f"icecast://source:{safe_pass}@localhost:8000/djalyx"
+
+    async def get_random_atmospherics(self):
+        """Выбирает случайный звук из папки ЭВМ."""
+        path = (
+            "/home/ruslan/Develop/Music/dj_alyx/Мелодии и ритмы ЭВМ"  # Укажи свой путь
+        )
+        files = [
+            os.path.join(path, f)
+            for f in os.listdir(path)
+            if f.endswith(".mp3") or f.endswith(".wav")
+        ]
+        return random.choice(files)
 
     def get_random_track(self):
         conn = sqlite3.connect(db_path)
@@ -66,125 +76,101 @@ class CyberRadio:
             return None
         t = random.choice(tracks)
         return {
-            "id": t[0],
             "title": t[1],
             "artist": t[2],
             "path": t[3],
-            "artist_id": t[4],
             "cached_bio": t[5],
         }
 
-    async def start_stream(self):
-        """Запускает ezstream для стриминга на Icecast."""
-        if (
-            hasattr(self, "ezstream_proc")
-            and self.ezstream_proc is not None
-            and self.ezstream_proc.returncode is None
-        ):
-            return
+    async def start_master_stream(self):
+        """Запускает непрерывный процесс вещания."""
+        print(f"[*] [System]: Подъем Master-узла вещания...")
 
-        print(f"[*] [System]: Инициализация вещательного узла через ezstream...")
-
+        # Определяем команду ДО запуска
         cmd = [
-            "ezstream",
-            "-c",
-            "ezstream.xml",  # путь к конфигурационному файлу
+            "ffmpeg",
+            "-re",
+            "-f",
+            "s16le",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-i",
+            "pipe:0",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
+            "-f",
+            "mp3",  # Указываем формат явно
+            self.icecast_url,
         ]
 
-        self.ezstream_proc = await asyncio.create_subprocess_exec(
+        # Запускаем
+        self.master_stream = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
 
+        # Даем время на запуск
         await asyncio.sleep(2)
-        if self.ezstream_proc.returncode is not None:
-            print("[❌] Критическая ошибка: ezstream не смог подключиться к Icecast.")
+
+        # Проверяем, жив ли процесс
+        if self.master_stream.returncode is not None:
+            # Если он умер сразу, читаем ошибку
+            _, err = await self.master_stream.communicate()
+            print(f"[❌] FFmpeg не запустился! Ошибка: {err.decode()}")
         else:
-            print("[✅] Сигнал подан на http://localhost:8000/djalyx")
+            print("[✅] Master-узел вещает в http://localhost:8000/djalyx")
 
-    async def play_audio(self, file_path):
-        """Вливает аудиофайл в stdin ezstream."""
-        if (
-            not hasattr(self, "ezstream_proc")
-            or self.ezstream_proc is None
-            or self.ezstream_proc.returncode is not None
-        ):
-            await self.start_stream()
-
+    async def play_single_file(self, file_path):
+        """Декодирует один файл и льет его в Мастер-процесс."""
         abs_path = os.path.abspath(file_path)
-        print(f"[ON AIR] {os.path.basename(abs_path)}")
-
-        try:
-            with open(abs_path, "rb") as f:
-                while True:
-                    chunk = f.read(16384)
-                    if not chunk:
-                        break
-                    self.ezstream_proc.stdin.write(chunk)
-                    await self.ezstream_proc.stdin.drain()
-        except (BrokenPipeError, ConnectionResetError):
-            print("[!] Обрыв связи с ezstream. Перезапуск...")
-            self.ezstream_proc = None
-
-    async def play_jingle(self):
-        jingles = [f for f in os.listdir(JINGLES_DIR) if f.endswith(".mp3")]
-        if jingles:
-            jingle_path = os.path.join(JINGLES_DIR, random.choice(jingles))
-            await self.play_audio(jingle_path)
-
-    async def play_dj_block(self, speech_files):
-        """Сборка джингла и AI-речи в монолитный блок."""
-        if not speech_files:
+        if not os.path.exists(abs_path) or not self.master_stream:
             return
 
-        full_output = os.path.join(TEMP_DIR, "final_dj_block.mp3")
-        list_filename = os.path.join(TEMP_DIR, "concat.txt")
+        print(f"[ON AIR] {os.path.basename(abs_path)}")
 
+        # Распаковываем аудио в сырой PCM звук
+        cmd = [
+            "ffmpeg",
+            "-i",
+            abs_path,
+            "-f",
+            "s16le",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "pipe:1",
+        ]
+
+        # Важно: stdout=asyncio.subprocess.PIPE
+        decoder = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+        )
+
+        # Перекачиваем аудио-данные из декодера в мастер-процесс
         try:
-            jingles = [f for f in os.listdir(JINGLES_DIR) if f.endswith(".mp3")]
-            jingle_path = (
-                os.path.abspath(os.path.join(JINGLES_DIR, random.choice(jingles)))
-                if jingles
-                else None
-            )
+            while True:
+                chunk = await decoder.stdout.read(16384)  # Читаем по 16КБ
+                if not chunk:
+                    break  # Файл закончился
 
-            with open(list_filename, "w") as f:
-                if jingle_path:
-                    f.write(f"file '{jingle_path}'\n")
-                for chunk in speech_files:
-                    f.write(f"file '{os.path.abspath(chunk['path'])}'\n")
+                self.master_stream.stdin.write(chunk)
+                await (
+                    self.master_stream.stdin.drain()
+                )  # Ждем, пока Мастер проглотит кусок
+        except Exception as e:
+            print(f"[!] Ошибка при передаче аудио: {e}")
 
-            # Склеиваем быстро без перекодирования
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-loglevel",
-                    "quiet",
-                    "-f",
-                    "concat",
-                    "-safe",
-                    "0",
-                    "-i",
-                    list_filename,
-                    "-c",
-                    "copy",
-                    full_output,
-                ]
-            )
+        await decoder.wait()
 
-            await self.play_audio(full_output)
-
-        finally:
-            if os.path.exists(list_filename):
-                os.remove(list_filename)
-            if os.path.exists(full_output):
-                os.remove(full_output)
-            for chunk in speech_files:
-                if os.path.exists(chunk["path"]):
-                    os.remove(chunk["path"])
+        if decoder.returncode != 0:
+            await asyncio.sleep(0.5)  # Защита от спама ошибками, если файл битый
 
     def split_text_to_chunks(self, text, max_chunk_size=150):
         if not isinstance(text, str):
@@ -232,8 +218,7 @@ class CyberRadio:
             speech_text = ""
             if isinstance(raw_response, str):
                 try:
-                    data = json.loads(raw_response)
-                    speech_text = data.get("content", raw_response)
+                    speech_text = json.loads(raw_response).get("content", raw_response)
                 except:
                     speech_text = raw_response
             elif isinstance(raw_response, dict):
@@ -259,7 +244,7 @@ class CyberRadio:
             self.is_generating = False
 
     async def run_radio(self):
-        # Стартовая чистка
+        # 1. Начальная очистка временных файлов
         for f in Path(TEMP_DIR).glob("*.mp3"):
             try:
                 os.remove(f)
@@ -270,32 +255,102 @@ class CyberRadio:
         print("    STATION DJ ALYX IS NOW ONLINE    ".center(50, "═"))
         print("═" * 50 + "\n")
 
-        await self.start_stream()
-        await self.play_jingle()
+        await self.start_master_stream()
+
+        # Настройки ротации
+        self.min_tracks_before_dj = 5  # Диджей выходит раз в 5-6 треков
+        self.tracks_played_counter = 0
 
         while self.is_running:
-            # 1. Либо вещаем блок с DJ, либо просто трек
-            if self.tracks_since_last_speech >= 4 and self.speech_buffer:
-                data = self.speech_buffer
-                self.speech_buffer = None
-                print(f"\n--- [ DJ ALYX ENTERING THE CHANNEL ] ---")
-                await self.play_dj_block(data["speech_files"])
-                self.tracks_since_last_speech = 0
-                track = data["track"]  # Играем трек, про который только что говорили
-            else:
-                track = self.get_random_track()
-                self.tracks_since_last_speech += 1
-
-            # 2. Подготовка AI-контента на будущее
+            # 2. Фоновая подготовка AI-контента
+            # Запускаем генерацию заранее, чтобы к моменту X всё было готово
             if not self.is_generating and not self.speech_buffer:
                 future_track = self.get_random_track()
-                asyncio.create_task(self.background_speech_generator(future_track))
+                if future_track:
+                    asyncio.create_task(self.background_speech_generator(future_track))
 
-            # 3. Вещание текущего трека
-            music_file = os.path.join(music_dir, track["path"])
-            await self.play_audio(music_file)
+            # 3. Внедрение DJ-блока по расписанию
+            # Условие: есть готовая речь И проиграно достаточно треков
+            if (
+                self.speech_buffer
+                and self.tracks_played_counter >= self.min_tracks_before_dj
+            ):
+                print(f"\n--- [ DJ ALYX ENTERING THE CHANNEL ] ---")
+                data = self.speech_buffer
+                self.speech_buffer = None
+                self.tracks_played_counter = 0  # Сброс счетчика
 
-            self.track_counter += 1
+                # Очищаем очередь, чтобы вставить блок целиком
+                self.playlist.clear()
+
+                # Собираем блок (Джингл -> Речь -> Трек)
+                # Вставляем в обратном порядке, так как используем insert(0)
+                track_path = os.path.join(music_dir, data["track"]["path"])
+                self.playlist.insert(0, track_path)
+
+                for chunk in reversed(data["speech_files"]):
+                    self.playlist.insert(0, chunk["path"])
+
+                jingles = [f for f in os.listdir(JINGLES_DIR) if f.endswith(".mp3")]
+                if jingles:
+                    self.playlist.insert(
+                        0, os.path.join(JINGLES_DIR, random.choice(jingles))
+                    )
+
+                print(f"[DJ BLOCK] Блок подготовлен: {data['track']['artist']}")
+
+            # 4. Поддержание наполнения плейлиста
+            if not self.playlist:
+                # 20% шанс на звуки "Музея ЭВМ", 80% на обычную музыку
+                if random.random() < 0.2:
+                    atm_file = await self.get_random_atmospherics()
+                    if atm_file:
+                        self.playlist.append(atm_file)
+                else:
+                    track = self.get_random_track()
+                    if track:
+                        self.playlist.append(os.path.join(music_dir, track["path"]))
+
+            # 5. Воспроизведение текущего элемента
+            if self.playlist:
+                current_file = self.playlist.pop(0)
+
+                # Определяем, что мы играем, для счетчика
+                is_music = music_dir in current_file
+                is_atmosphere = (
+                    "Atmosphere" in current_file
+                )  # Если папка так называется
+
+                await self.play_single_file(current_file)
+
+                # Если это был полноценный трек (не атмосфера и не джингл), инкрементируем счетчик
+                if is_music and not is_atmosphere:
+                    self.tracks_played_counter += 1
+                    print(
+                        f"[*] Прогресс блока: {self.tracks_played_counter}/{self.min_tracks_before_dj}"
+                    )
+
+                # 6. Очистка временных файлов AI после проигрывания
+                if TEMP_DIR in current_file and os.path.exists(current_file):
+                    try:
+                        os.remove(current_file)
+                    except:
+                        pass
+            else:
+                # Защита от пустого цикла, если музыка кончилась
+                await asyncio.sleep(1)
+
+            # 4. Воспроизведение
+            if self.playlist:
+                current_file = self.playlist.pop(0)
+                await self.play_single_file(current_file)
+
+                # Удаляем временные AI файлы
+                if TEMP_DIR in current_file and os.path.exists(current_file):
+                    try:
+                        os.remove(current_file)
+                    except:
+                        pass
 
 
 if __name__ == "__main__":
@@ -303,6 +358,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(radio.run_radio())
     except KeyboardInterrupt:
-        if hasattr(radio, "ezstream_proc"):
-            radio.ezstream_proc.terminate()
+        if radio.master_stream:
+            radio.master_stream.terminate()
         print("\n[*] DJ ALYX: Сигнал потерян.")

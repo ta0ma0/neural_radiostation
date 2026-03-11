@@ -2,7 +2,6 @@
   <servers>
     <server>
       <name>default</name>
-      <!-- Данные из вашего URL: http://source:ice1984Ocean@localhost:8000/djalyx -->
       <hostname>localhost</hostname>
       <port>8000</port>
       <password>ice1984Ocean</password>
@@ -25,11 +24,10 @@
     </stream>
   </streams>
 
-    <intakes>
+  <intakes>
     <intake>
       <name>default</name>
-      <type>stdin</type> <!-- Измените playlist на stdin -->
+      <type>stdin</type>
     </intake>
   </intakes>
-
 </ezstream>

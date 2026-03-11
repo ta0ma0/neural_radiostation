@@ -10,7 +10,9 @@ last_fm_key = os.getenv("LAST_FM_KEY")
 
 def search_artist(artist_name):
     url = f"http://ws.audioscrobbler.com/2.0/?method=artist.search&artist={artist_name}&api_key={last_fm_key}&format=json"
-    print(f"Searching artist with URL: {url}")
+    print(
+        f"Searching artist with URL: http://ws.audioscrobbler.com/2.0/?method=artist.search&artist={artist_name}"
+    )
     response = requests.get(url)
     print(f"Response status code: {response.status_code}")
     if response.status_code == 200:
@@ -26,7 +28,9 @@ def search_artist(artist_name):
 
 def get_artist_info(artist_name):
     url = f"http://ws.audioscrobbler.com/2.0/?method=artist.getinfo&artist={artist_name}&api_key={last_fm_key}&format=json"
-    print(f"Getting artist info with URL: {url}")
+    print(
+        f"Getting artist info with URL: http://ws.audioscrobbler.com/2.0/?method=artist.getinfo&artist={artist_name}&"
+    )
     response = requests.get(url)
     print(f"Response status code: {response.status_code}")
     if response.status_code == 200:
