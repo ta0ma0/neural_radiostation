@@ -1,0 +1,4 @@
+python-dotenv
+mutagen
+pygame
+f5-tts
