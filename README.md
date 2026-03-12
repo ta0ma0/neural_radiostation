@@ -16,6 +16,7 @@ F5-TTS.
 6. Промпты для LLM tools/journal_prompt_generic.py, легко изменить вещание на английский или любой другой язык, если модель позволяет.
 7. Запуск всего pipeline play_music.py
 8. Выход в интернет через icecast ссылка на поток встраивается в xterm.js фронтенда у меня django-aws-terminal-websocket
+9. "Мелодии и ритмы ЭВМ" - атмосферный звуки ЭВМ из музея Яндекса.
 
 
 ![screenshot](./data/images/Screenshot_2026-03-12_03-45-20.png?raw=true "Frontend")
