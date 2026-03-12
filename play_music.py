@@ -284,7 +284,7 @@ class CyberRadio:
 
         await self.start_master_stream()
 
-        self.min_tracks_before_dj = 3
+        self.min_tracks_before_dj = 3  # Регулирует сколько треков будет звучать до выступления диджея, в это время просихоит генерация.
         self.tracks_played_counter = 0
 
         while self.is_running:
