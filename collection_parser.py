@@ -9,6 +9,7 @@ from mutagen.mp3 import MP3
 # Загрузка переменных окружения из .env файла
 load_dotenv()
 music_dir = os.getenv("MUSIC_DIR")
+DATA_BASE = os.getenv("DATA_BASE")
 
 
 # Тест на 100 случайных файлах для определения версий тегов
@@ -31,7 +32,7 @@ def test_tag_versions(music_dir, sample_size=100):
 
 # Создание базы данных и таблиц
 def create_database():
-    conn = sqlite3.connect("music_collection.db")
+    conn = sqlite3.connect(DATA_BASE)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tracks (
@@ -81,7 +82,7 @@ def get_or_create_artist_id(conn, artist_name):
 
 # Парсинг метаданных и запись в базу данных
 def parse_and_store_metadata(music_dir):
-    conn = sqlite3.connect("music_collection.db")
+    conn = sqlite3.connect(DATA_BASE)
     cursor = conn.cursor()
     for root, dirs, files in os.walk(music_dir):
         for file in files:

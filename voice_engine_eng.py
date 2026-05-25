@@ -34,7 +34,7 @@ class AlyxVoice:
         self.ref_audio = ref_audio
         self.ref_text = ref_text
         self.device = device
-        tty_log("[*] [System]: Voice Engine инициализирован.")
+        tty_log("[*] [System]: Voice Engine initialized.")
 
     def generate(self, text, output_path, speed=1.1):
         # 1. Определяем пути
@@ -96,5 +96,5 @@ class AlyxVoice:
 
             return mp3_path
         except subprocess.CalledProcessError as e:
-            tty_log(f"[!] Ошибка CLI или FFmpeg: {e.stderr.decode()}")
+            tty_log(f"[!] CLI or FFmpeg error: {e.stderr.decode()}")
             return None

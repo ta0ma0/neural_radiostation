@@ -9,11 +9,9 @@ import os
 import sys
 from pathlib import Path
 
-import aiohttp
 import requests
 
 from journal_prompt_generic import PROMPT_DJ2_ENG as PROMPT
-from last_fm import get_artist_info
 
 sys.path.append(str(Path(__file__).parent.parent))
 

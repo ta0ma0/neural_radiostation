@@ -6,6 +6,8 @@ import random
 import re
 import sqlite3
 import subprocess
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -17,11 +19,40 @@ from ai_connector import generate_dj_speech
 from last_fm import main as search_artist_info
 from voice_engine import AlyxVoice
 
+# Настройка буферизации для логов
+sys.stdout = os.fdopen(sys.stdout.fileno(), "w", encoding="utf-8", buffering=1)
+sys.stderr = os.fdopen(sys.stderr.fileno(), "w", encoding="utf-8", buffering=1)
+
 # Настройки путей
-ARCHIVE_DIR = "./archives/"
+load_dotenv()
+PROJECT_DIR = "/home/ruslan/Develop/Music/dj_alyx"
+ARCHIVE_DIR = os.path.join(PROJECT_DIR, "archives")
+TEMP_DIR = os.path.join(PROJECT_DIR, "temp_speech")
+JINGLES_DIR = os.path.join(PROJECT_DIR, "jingles")
+LOG_FILE = os.path.join(PROJECT_DIR, "django-aws-terminal-websocket/dj_alyx_radio.log")
+
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
-TEMP_DIR = "./temp_speech/"
 os.makedirs(TEMP_DIR, exist_ok=True)
+
+MUSIC_DIR = os.getenv("MUSIC_DIR")
+DB_PATH = os.getenv("DATA_BASE")
+
+
+def tty_log(message, style="info"):
+    colors = {
+        "info": "\033[32m[SYSTEM]\033[0m",
+        "on_air": "\033[36m[ON AIR]\033[0m",
+        "ai": "\033[35m[⚙️ AI]\033[0m",
+        "error": "\033[31m[ERROR]\033[0m",
+        "time": f"\033[90m{datetime.now().strftime('%H:%M:%S')}\033[0m",
+    }
+    prefix = colors.get(style, colors["info"])
+    full_message = f"{colors['time']} {prefix} {message}"
+
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{full_message}\n")
+    print(full_message, flush=True)
+
 
 # Инициализация голоса
 alyx = AlyxVoice(
@@ -31,64 +62,79 @@ alyx = AlyxVoice(
     device="cpu",
 )
 
-load_dotenv()
-music_dir = os.getenv("MUSIC_DIR")
-db_path = "music_collection.db"
-JINGLES_DIR = "/home/ruslan/Develop/Music/dj_alyx/jingles/"
-
 
 class CyberRadio:
     def __init__(self):
         self.is_running = True
-        self.playlist = []  # Теперь тут строгая очередь (FIFO)
-
+        self.playlist = []
         self.speech_buffer = None
         self.is_generating = False
-
-        # Master-процесс FFmpeg
         self.master_stream = None
+
         safe_pass = quote("ice1984Ocean", safe="")
         self.icecast_url = f"icecast://source:{safe_pass}@localhost:8000/djalyx"
 
+    async def monitor_ffmpeg_stderr(self):
+        """Ловит ошибки FFmpeg в реальном времени"""
+        if not self.master_stream or not self.master_stream.stderr:
+            return
+        while True:
+            try:
+                line = await self.master_stream.stderr.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="ignore").strip()
+                if any(
+                    err in text.lower()
+                    for err in [
+                        "error",
+                        "connection",
+                        "server",
+                        "pipe",
+                        "failed",
+                        "auth",
+                    ]
+                ):
+                    tty_log(f"[FFMPEG DIAGNOSTIC] {text}", "error")
+            except:
+                break
+
     async def get_random_atmospherics(self):
-        """Выбирает случайный звук из папки ЭВМ."""
-        path = (
-            "/home/ruslan/Develop/Music/dj_alyx/Мелодии и ритмы ЭВМ"  # Укажи свой путь
-        )
+        path = os.path.join(PROJECT_DIR, "Мелодии и ритмы ЭВМ")
+        if not os.path.exists(path):
+            return None
         files = [
             os.path.join(path, f)
             for f in os.listdir(path)
-            if f.endswith(".mp3") or f.endswith(".wav")
+            if f.endswith((".mp3", ".wav"))
         ]
-        return random.choice(files)
+        return random.choice(files) if files else None
 
     def get_random_track(self):
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT tracks.id, tracks.title, artists.name, tracks.path, tracks.artist_id, artists.summary
-            FROM tracks
-            LEFT JOIN artists ON tracks.artist_id = artists.id
-        """)
-        tracks = cursor.fetchall()
-        conn.close()
-        if not tracks:
-            return None
-        t = random.choice(tracks)
-        return {
-            "title": t[1],
-            "artist": t[2],
-            "path": t[3],
-            "cached_bio": t[5],
-        }
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT tracks.title, artists.name, tracks.path, artists.summary
+                FROM tracks
+                LEFT JOIN artists ON tracks.artist_id = artists.id
+                ORDER BY RANDOM() LIMIT 1
+            """)
+            t = cursor.fetchone()
+            conn.close()
+            if t:
+                return {"title": t[0], "artist": t[1], "path": t[2], "cached_bio": t[3]}
+        except Exception as e:
+            tty_log(f"Ошибка БД: {e}", "error")
+        return None
 
     async def start_master_stream(self):
-        """Запускает непрерывный процесс вещания."""
-        print(f"[*] [System]: Подъем Master-узла вещания...")
+        """Запуск основного вещания (Icecast + GNU Radio Pipe)"""
+        tty_log("[*] [System]: Подъем Master-узла вещания...")
 
-        # Определяем команду ДО запуска
         cmd = [
             "ffmpeg",
+            "-y",
             "-re",
             "-f",
             "s16le",
@@ -98,43 +144,61 @@ class CyberRadio:
             "2",
             "-i",
             "pipe:0",
+            "-filter_complex",
+            "[0:a]asplit=2[ice][grc]",
+            "-map",
+            "[ice]",
             "-c:a",
             "libmp3lame",
             "-b:a",
             "192k",
             "-f",
-            "mp3",  # Указываем формат явно
+            "mp3",
             self.icecast_url,
+            "-map",
+            "[grc]",
+            "-f",
+            "s16le",
+            "-ar",
+            "48000",
+            "-ac",
+            "1",
+            "-flush_packets",
+            "1",
+            "/tmp/grc_pipe",
         ]
 
-        # Запускаем
         self.master_stream = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
 
-        # Даем время на запуск
+        asyncio.create_task(self.monitor_ffmpeg_stderr())
         await asyncio.sleep(2)
 
-        # Проверяем, жив ли процесс
         if self.master_stream.returncode is not None:
-            # Если он умер сразу, читаем ошибку
-            _, err = await self.master_stream.communicate()
-            print(f"[❌] FFmpeg не запустился! Ошибка: {err.decode()}")
-        else:
-            print("[✅] Master-узел вещает в http://localhost:8000/djalyx")
+            tty_log(
+                f"[❌] FFmpeg Master не смог стартовать. Код: {self.master_stream.returncode}",
+                "error",
+            )
 
-    async def play_single_file(self, file_path):
-        """Декодирует один файл и льет его в Мастер-процесс."""
-        abs_path = os.path.abspath(file_path)
+    async def play_single_file(self, track):
+        if isinstance(track, str):
+            track = {
+                "path": track,
+                "artist": "System",
+                "title": os.path.basename(track),
+            }
+
+        abs_path = os.path.abspath(track.get("path"))
         if not os.path.exists(abs_path) or not self.master_stream:
+            tty_log(f"Файл не найден: {abs_path}", "error")
             return
 
-        print(f"[ON AIR] {os.path.basename(abs_path)}")
+        tty_log(f"{track.get('artist')} — {track.get('title')}", "on_air")
 
-        # Распаковываем аудио в сырой PCM звук
         cmd = [
             "ffmpeg",
             "-i",
@@ -147,210 +211,219 @@ class CyberRadio:
             "2",
             "pipe:1",
         ]
-
-        # Важно: stdout=asyncio.subprocess.PIPE
         decoder = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
         )
 
-        # Перекачиваем аудио-данные из декодера в мастер-процесс
         try:
             while True:
-                chunk = await decoder.stdout.read(16384)  # Читаем по 16КБ
+                chunk = await decoder.stdout.read(16384)
                 if not chunk:
-                    break  # Файл закончился
-
+                    break
                 self.master_stream.stdin.write(chunk)
-                await (
-                    self.master_stream.stdin.drain()
-                )  # Ждем, пока Мастер проглотит кусок
+                await self.master_stream.stdin.drain()
         except Exception as e:
-            print(f"[!] Ошибка при передаче аудио: {e}")
-
-        await decoder.wait()
-
-        if decoder.returncode != 0:
-            await asyncio.sleep(0.5)  # Защита от спама ошибками, если файл битый
+            tty_log(f"Ошибка трансляции трека: {repr(e)}", "error")
+        finally:
+            if decoder.returncode is None:
+                decoder.terminate()
+            await decoder.wait()
 
     def split_text_to_chunks(self, text, max_chunk_size=150):
-        if not isinstance(text, str):
+        if not text:
             return []
         sentences = re.split(r"(?<=[.!?])\s+|(?<=,)\s+", text)
-        chunks, current_chunk = [], ""
-        for sentence in sentences:
-            if len(sentence) > max_chunk_size:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                    current_chunk = ""
-                for i in range(0, len(sentence), max_chunk_size):
-                    chunks.append(sentence[i : i + max_chunk_size].strip())
-            elif len(current_chunk) + len(sentence) + 1 <= max_chunk_size:
-                current_chunk += (" " + sentence) if current_chunk else sentence
+        chunks, current = [], ""
+        for s in sentences:
+            if len(current) + len(s) < max_chunk_size:
+                current += (" " + s) if current else s
             else:
-                chunks.append(current_chunk.strip())
-                current_chunk = sentence
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        return [c for c in chunks if c]
+                chunks.append(current.strip())
+                current = s
+        if current:
+            chunks.append(current.strip())
+        return chunks
+
+    async def archive_speech(self, track, speech_files):
+        artist = str(track.get("artist", "Unknown")).replace("/", "_")
+        title = str(track.get("title", "Unknown")).replace("/", "_")
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        out_path = os.path.join(ARCHIVE_DIR, f"{ts}_{artist}_{title}.mp3")
+        list_path = os.path.join(TEMP_DIR, f"list_{ts}.txt")
+
+        try:
+            with open(list_path, "w") as f:
+                for sf in speech_files:
+                    f.write(f"file '{os.path.abspath(sf['path'])}'\n")
+
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                list_path,
+                "-c",
+                "copy",
+                out_path,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            await proc.wait()
+            if proc.returncode == 0:
+                print(f"[💾 ARCHIVE] Сохранено: {os.path.basename(out_path)}")
+        except Exception as e:
+            print(f"Ошибка архивации: {e}")
+        finally:
+            if os.path.exists(list_path):
+                os.remove(list_path)
 
     async def background_speech_generator(self, track):
         if self.is_generating:
             return
         self.is_generating = True
-        artist_name = track["artist"]
-        gen_id = random.randint(100, 999)
-
         try:
             loop = asyncio.get_event_loop()
-            lastfm_data = await loop.run_in_executor(
-                None, search_artist_info, artist_name
-            )
+            artist = track["artist"]
+            lastfm = await loop.run_in_executor(None, search_artist_info, artist)
             bio = (
-                lastfm_data.get("artist", {}).get("bio", {}).get("summary")
+                lastfm.get("artist", {}).get("bio", {}).get("summary")
                 or track.get("cached_bio")
-                or f"Исполнитель {artist_name}."
+                or f"Artist: {artist}"
             )
 
-            raw_response = await loop.run_in_executor(
-                None, generate_dj_speech, bio, track["title"], artist_name
+            raw_speech = await loop.run_in_executor(
+                None, generate_dj_speech, bio, track["title"], artist
             )
-
-            speech_text = ""
-            if isinstance(raw_response, str):
+            # Извлекаем текст если пришел JSON
+            speech_text = raw_speech
+            if isinstance(raw_speech, str) and raw_speech.startswith("{"):
                 try:
-                    speech_text = json.loads(raw_response).get("content", raw_response)
+                    speech_text = json.loads(raw_speech).get("content", raw_speech)
                 except:
-                    speech_text = raw_response
-            elif isinstance(raw_response, dict):
-                speech_text = raw_response.get("content", "")
-
-            if not speech_text or len(speech_text) < 10:
-                return
+                    pass
 
             chunks = self.split_text_to_chunks(speech_text)
             speech_files = []
+            gen_id = random.randint(1000, 9999)
+
             for i, chunk in enumerate(chunks):
-                path = os.path.join(TEMP_DIR, f"gen_{gen_id}_{i}.mp3")
-                if await loop.run_in_executor(None, alyx.generate, chunk, path):
-                    speech_files.append({"path": path})
+                p = os.path.join(TEMP_DIR, f"gen_{gen_id}_{i}.mp3")
+                if await loop.run_in_executor(None, alyx.generate, chunk, p):
+                    speech_files.append({"path": p})
 
             if speech_files:
                 self.speech_buffer = {"track": track, "speech_files": speech_files}
-                print(f"[⚙️ AI] Эфирный блок для {artist_name} подготовлен.")
-
+                tty_log(f"Подготовлена подводка для {artist}", "ai")
+                asyncio.create_task(self.archive_speech(track, speech_files))
         except Exception as e:
-            print(f"[‼️ AI ERROR]: {e}")
+            print(f"AI Gen Error: {e}")
         finally:
             self.is_generating = False
 
     async def run_radio(self):
-        # 1. Начальная очистка временных файлов
-        for f in Path(TEMP_DIR).glob("*.mp3"):
+        # 1. Очистка старья (пути приводим к абсолютному виду сразу)
+        temp_base = os.path.abspath(TEMP_DIR)
+        music_base = os.path.abspath(MUSIC_DIR)
+        jingle_base = os.path.abspath(JINGLES_DIR)
+
+        for f in Path(temp_base).glob("*.mp3"):
             try:
                 os.remove(f)
             except:
                 pass
 
-        print("\n" + "═" * 50)
-        print("    STATION DJ ALYX IS NOW ONLINE    ".center(50, "═"))
-        print("═" * 50 + "\n")
+        tty_log("═" * 50)
+        tty_log(" STATION DJ ALYX IS ONLINE ".center(50, "═"))
+        tty_log("═" * 50)
 
         await self.start_master_stream()
 
-        # Настройки ротации
-        self.min_tracks_before_dj = 5  # Диджей выходит раз в 5-6 треков
-        self.tracks_played_counter = 0
+        tracks_played = 0
+        min_before_dj = 3
 
         while self.is_running:
-            # 2. Фоновая подготовка AI-контента
-            # Запускаем генерацию заранее, чтобы к моменту X всё было готово
+            if self.master_stream.returncode is not None:
+                tty_log("Master-стрим упал, рестарт...", "error")
+                await self.start_master_stream()
+
+            # Фоновая генерация, если Аликс молчит
             if not self.is_generating and not self.speech_buffer:
-                future_track = self.get_random_track()
-                if future_track:
-                    asyncio.create_task(self.background_speech_generator(future_track))
+                future = self.get_random_track()
+                if future:
+                    asyncio.create_task(self.background_speech_generator(future))
 
-            # 3. Внедрение DJ-блока по расписанию
-            # Условие: есть готовая речь И проиграно достаточно треков
-            if (
-                self.speech_buffer
-                and self.tracks_played_counter >= self.min_tracks_before_dj
-            ):
-                print(f"\n--- [ DJ ALYX ENTERING THE CHANNEL ] ---")
-                data = self.speech_buffer
-                self.speech_buffer = None
-                self.tracks_played_counter = 0  # Сброс счетчика
-
-                # Очищаем очередь, чтобы вставить блок целиком
-                self.playlist.clear()
-
-                # Собираем блок (Джингл -> Речь -> Трек)
-                # Вставляем в обратном порядке, так как используем insert(0)
-                track_path = os.path.join(music_dir, data["track"]["path"])
-                self.playlist.insert(0, track_path)
-
-                for chunk in reversed(data["speech_files"]):
-                    self.playlist.insert(0, chunk["path"])
-
-                jingles = [f for f in os.listdir(JINGLES_DIR) if f.endswith(".mp3")]
-                if jingles:
-                    self.playlist.insert(
-                        0, os.path.join(JINGLES_DIR, random.choice(jingles))
-                    )
-
-                print(f"[DJ BLOCK] Блок подготовлен: {data['track']['artist']}")
-
-            # 4. Поддержание наполнения плейлиста
+            # Формируем очередь
             if not self.playlist:
-                # 20% шанс на звуки "Музея ЭВМ", 80% на обычную музыку
-                if random.random() < 0.2:
-                    atm_file = await self.get_random_atmospherics()
-                    if atm_file:
-                        self.playlist.append(atm_file)
-                else:
-                    track = self.get_random_track()
-                    if track:
-                        self.playlist.append(os.path.join(music_dir, track["path"]))
-
-            # 5. Воспроизведение текущего элемента
-            if self.playlist:
-                current_file = self.playlist.pop(0)
-
-                # Определяем, что мы играем, для счетчика
-                is_music = music_dir in current_file
-                is_atmosphere = (
-                    "Atmosphere" in current_file
-                )  # Если папка так называется
-
-                await self.play_single_file(current_file)
-
-                # Если это был полноценный трек (не атмосфера и не джингл), инкрементируем счетчик
-                if is_music and not is_atmosphere:
-                    self.tracks_played_counter += 1
-                    print(
-                        f"[*] Прогресс блока: {self.tracks_played_counter}/{self.min_tracks_before_dj}"
+                # ПРОВЕРКА: Пора ли выходить Аликс?
+                if self.speech_buffer and tracks_played >= min_before_dj:
+                    tty_log(
+                        f"--- [ DJ ALYX НА ВЫЛЕТЕ: {tracks_played} трека пройдено ] ---",
+                        "on_air",
                     )
+                    data = self.speech_buffer
+                    self.speech_buffer = None
+                    tracks_played = 0
 
-                # 6. Очистка временных файлов AI после проигрывания
-                if TEMP_DIR in current_file and os.path.exists(current_file):
+                    # Добавляем джингл
+                    jingles = [f for f in os.listdir(jingle_base) if f.endswith(".mp3")]
+                    if jingles:
+                        self.playlist.append(
+                            {
+                                "path": os.path.join(
+                                    jingle_base, random.choice(jingles)
+                                ),
+                                "artist": "System",
+                                "title": "Jingle",
+                            }
+                        )
+
+                    # Добавляем речь
+                    for sf in data["speech_files"]:
+                        self.playlist.append(
+                            {"path": sf["path"], "artist": "DJ Alyx", "title": "Speech"}
+                        )
+
+                    # Добавляем целевой трек
+                    t_info = data["track"]
+                    t_info["path"] = os.path.join(music_base, t_info["path"])
+                    self.playlist.append(t_info)
+                else:
+                    # Обычный режим наполнения плейлиста
+                    t = self.get_random_track()
+                    if t:
+                        t["path"] = os.path.join(music_base, t["path"])
+                        self.playlist.append(t)
+
+            # ИГРАЕМ ТРЕК
+            if self.playlist:
+                item = self.playlist.pop(0)
+                # Важно: нормализуем путь перед проверкой
+                current_path = os.path.normpath(os.path.abspath(item["path"]))
+
+                await self.play_single_file(item)
+
+                # --- ЛОГИКА ОТСЧЕТА (ИСПРАВЛЕННАЯ) ---
+                is_jingle = current_path.startswith(os.path.normpath(jingle_base))
+                is_speech = current_path.startswith(os.path.normpath(temp_base))
+                is_music = current_path.startswith(os.path.normpath(music_base))
+
+                if is_music and not is_jingle and not is_speech:
+                    tracks_played += 1
+                    tty_log(f"📈 Счетчик: {tracks_played}/{min_before_dj}", "info")
+                else:
+                    tty_log(f"⏸ Технический блок (не в счет)", "info")
+
+                # Удаление временной речи
+                if is_speech:
                     try:
-                        os.remove(current_file)
+                        os.remove(current_path)
                     except:
                         pass
             else:
-                # Защита от пустого цикла, если музыка кончилась
                 await asyncio.sleep(1)
-
-            # 4. Воспроизведение
-            if self.playlist:
-                current_file = self.playlist.pop(0)
-                await self.play_single_file(current_file)
-
-                # Удаляем временные AI файлы
-                if TEMP_DIR in current_file and os.path.exists(current_file):
-                    try:
-                        os.remove(current_file)
-                    except:
-                        pass
 
 
 if __name__ == "__main__":
@@ -360,4 +433,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         if radio.master_stream:
             radio.master_stream.terminate()
-        print("\n[*] DJ ALYX: Сигнал потерян.")
+        tty_log("Сигнал потерян.")

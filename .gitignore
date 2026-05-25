@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Environment
+.env
+
+# Virtual environment
+venv/
+
+# Audio / temp
+temp_speech/
+jingles/
+archives/
+"Мелодии и ритмы ЭВМ"
+
+# Databases
+*.db
+*.sqlite3
+
+# Cache
+.cache_images/
+
+# F5-TTS submodule (large dependency)
+F5-TTS/
+
+# Logs
+*.log
+
+# Editors
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Coverage
+htmlcov/
+.coverage
+
+# Python packaging
+dist/
+build/
+*.egg-info/

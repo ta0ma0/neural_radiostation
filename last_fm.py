@@ -1,7 +1,35 @@
+import json
 import os
+from datetime import datetime
 
 import requests
 from dotenv import load_dotenv
+
+
+def tty_log(message, style="info"):
+    colors = {
+        "info": "\033[32m[SYSTEM]\033[0m",
+        "on_air": "\033[36m[ON AIR]\033[0m",
+        "ai": "\033[35m[⚙️ AI]\033[0m",
+        "error": "\033[31m[ERROR]\033[0m",
+        "time": f"\033[90m{datetime.now().strftime('%H:%M:%S')}\033[0m",
+    }
+    prefix = colors.get(style, colors["info"])
+
+    # 1. Формируем строку сообщения
+    full_message = f"{colors['time']} {prefix} {message}"
+
+    # 2. Пишем в файл (для контейнера)
+    with open(
+        "/home/ruslan/Develop/Music/dj_alyx/django-aws-terminal-websocket/dj_alyx_radio.log",
+        "a",
+        encoding="utf-8",
+    ) as f:
+        f.write(f"{full_message}\n")
+
+    # 3. Выводим в консоль с flush=True
+    print(full_message, flush=True)
+
 
 # Загрузка переменных окружения из .env файла
 load_dotenv()
@@ -35,6 +63,8 @@ def get_artist_info(artist_name):
     print(f"Response status code: {response.status_code}")
     if response.status_code == 200:
         data = response.json()
+        tty_log(f"Last.fm say: {response.status_code}")
+        tty_log(f"")
         # print("Artist info JSON:")
         # print(data)
         return data
@@ -68,3 +98,12 @@ def main(artist_name_mp3):
             artist_info = get_artist_info(artist_name)
             # print(artist_info)
             return artist_info
+
+
+if __name__ == "__main__":
+    answer = main("GusGus")
+    # print(type(answer["artist"]))
+    t = answer.get("artist")
+    print(t.get("bio").get("summary"))
+    # for key in answer["artist"]:
+    #     print(key.get("bio"))
