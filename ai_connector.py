@@ -12,7 +12,7 @@ from pathlib import Path
 import aiohttp
 import requests
 
-from journal_prompt_generic import PROMPT_DJ2_ENG as PROMPT
+from journal_prompt_generic import PROMPT_DJ2 as PROMPT, PROMPT_DJ_NO_INFO_RU as PROMPT_NI
 from last_fm import get_artist_info
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -32,7 +32,6 @@ LOCAL_API_URL = "http://127.0.0.1:1234/v1/chat/completions"
 YOUR_SITE_URL = "http://localhost"
 YOUR_APP_NAME = "DJ-Agent"
 
-# Промпт для радио-ведущего
 PROMPT_DJ = PROMPT
 
 
@@ -110,10 +109,16 @@ def generate_dj_speech(artist_info: str, track_name: str, artist_name: str) -> s
         return None
 
     # 2. Формирование промпта
-    system_message = PROMPT_DJ.format(track_name=track_name, artist_name=artist_name)
+    bad_bio = not artist_info or len(artist_info) < 20 or artist_info.startswith("Artist:")
+    if bad_bio:
+        system_message = PROMPT_NI.format(track_name=track_name, artist_name=artist_name)
+        user_content = "Информации нет. Придумай что-то абсурдное."
+    else:
+        system_message = PROMPT_DJ.format(track_name=track_name, artist_name=artist_name)
+        user_content = artist_info
     messages = [
         {"role": "system", "content": system_message},
-        {"role": "user", "content": artist_info},
+        {"role": "user", "content": user_content},
     ]
 
     # 3. Вызов генерации

@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ru">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>DJ ALYX | REMOTE ACCESS</title>
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css"
+        />
+        <style>
+            :root {
+                --bg-color: #050505;
+                --main-green: #00ff41; /* CRT Green */
+                --dim-green: #003b00;
+                --font-main: "Fira Code", "Courier New", monospace;
+            }
+
+            body,
+            html {
+                margin: 0;
+                padding: 0;
+                background: var(--bg-color);
+                color: var(--main-green);
+                font-family: var(--font-main);
+                height: 100vh;
+                overflow: hidden;
+            }
+
+            /* Сканирующая линия как на старых мониторах */
+            body::before {
+                content: " ";
+                display: block;
+                position: absolute;
+                top: 0;
+                left: 0;
+                bottom: 0;
+                right: 0;
+                background:
+                    linear-gradient(
+                        rgba(18, 16, 16, 0) 50%,
+                        rgba(0, 0, 0, 0.25) 50%
+                    ),
+                    linear-gradient(
+                        90deg,
+                        rgba(255, 0, 0, 0.06),
+                        rgba(0, 255, 0, 0.02),
+                        rgba(0, 0, 255, 0.06)
+                    );
+                z-index: 10;
+                background-size:
+                    100% 2px,
+                    3px 100%;
+                pointer-events: none;
+            }
+
+            #terminal-container {
+                height: calc(100vh - 40px); /* Место для плеера */
+                width: 100vw;
+                padding: 10px;
+                box-sizing: border-box;
+            }
+
+            /* Статус-бар внизу (tmux style) */
+            #status-bar {
+                height: 40px;
+                background: var(--main-green);
+                color: var(--bg-color);
+                display: flex;
+                align-items: center;
+                padding: 0 15px;
+                font-weight: bold;
+                font-size: 0.9em;
+                justify-content: space-between;
+            }
+
+            .controls {
+                display: flex;
+                align-items: center;
+                gap: 20px;
+            }
+            .btn {
+                cursor: pointer;
+                text-decoration: underline;
+                border: none;
+                background: none;
+                font-family: inherit;
+                font-weight: bold;
+                color: var(--bg-color);
+            }
+            .btn:hover {
+                background: var(--bg-color);
+                color: var(--main-green);
+            }
+
+            #listeners-count {
+                background: var(--bg-color);
+                color: var(--main-green);
+                padding: 2px 8px;
+            }
+
+            /* Кастомизация Xterm */
+            /* Увеличиваем ширину терминала */
+            #terminal {
+                width: 100% !important; /* или фиксированное значение, например 90vw */
+                max-width: none !important; /* убираем ограничение по ширине */
+            }
+
+            /* Убираем отступы и ограничения у вьюпорта */
+            .xterm-viewport {
+                width: 100% !important;
+                overflow-x: hidden !important; /* если не хочешь горизонтальный скролл */
+            }
+            .xterm-screen {
+                width: 100% !important;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="terminal-container">
+            <div id="terminal"></div>
+        </div>
+
+        <div id="status-bar">
+            <div class="controls">
+                <span>DJ ALYX v1.0.4 // LOCALHOST:8000</span>
+                <button id="play-pause" class="btn">
+                    [ CONNECT TO STREAM ]
+                </button>
+                <div id="now-playing">STATION: IDLE</div>
+            </div>
+            <div class="controls">
+                <span>LISTENERS: <span id="listeners-count">0</span></span>
+                <span id="clock">00:00:00</span>
+            </div>
+        </div>
+        <audio id="audio-player" src="/stream/djalyx"></audio>
+        <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+        <script>
+            // 1. Инициализация терминала
+            const term = new Terminal({
+                cursorBlink: true,
+                fontFamily: '"Fira Code", monospace',
+                fontSize: 14,
+                theme: {
+                    background: "#050505",
+                    foreground: "#00ff41",
+                    cursor: "#00ff41",
+                    selection: "#003b00",
+                },
+            });
+            term.open(document.getElementById("terminal"));
+            term.resize(120, 30); // Принудительно устанавливаем размер
+
+            // 2. WebSocket логика
+            const ws_scheme =
+                window.location.protocol === "https:" ? "wss" : "ws";
+            const socket = new WebSocket(
+                `${ws_scheme}://${window.location.host}/ws/terminal/`,
+            );
+            socket.binaryType = "arraybuffer";
+
+            socket.onopen = () =>
+                term.writeln(
+                    "\x1b[32m[SYSTEM]\x1b[0m CONNECTION ESTABLISHED. WELCOME, OPERATOR.",
+                );
+
+            socket.onmessage = (event) => {
+                let data;
+                try {
+                    const parsed = JSON.parse(event.data);
+
+                    // 1. Если пришло сообщение лога
+                    if (parsed.message) {
+                        term.write(parsed.message.replace(/\n/g, "\r\n"));
+                    }
+
+                    // 2. Если пришло обновление трека
+                    if (parsed.track) {
+                        document.getElementById("now-playing").innerText =
+                            `PLAYING: ${parsed.track}`;
+                    }
+
+                    // 3. ИНТЕГРАЦИЯ СЧЕТЧИКА: если пришло число слушателей
+                    if (parsed.listeners !== undefined) {
+                        document.getElementById("listeners-count").innerText =
+                            parsed.listeners;
+                    }
+                } catch (e) {
+                    // Если это старый формат или просто текст
+                    term.write(event.data);
+                }
+            };
+
+            term.onData((data) => socket.send(new TextEncoder().encode(data)));
+
+            // 3. Audio Player логика
+            const audio = document.getElementById("audio-player");
+            const playBtn = document.getElementById("play-pause");
+            const nowPlayingElement = document.getElementById("now-playing");
+
+            playBtn.onclick = () => {
+                if (audio.paused) {
+                    audio.play();
+                    playBtn.innerText = "[ DISCONNECT ]";
+                    nowPlayingElement.innerText = "STATION: ON AIR";
+                } else {
+                    audio.pause();
+                    audio.src = audio.src;
+                    playBtn.innerText = "[ CONNECT TO STREAM ]";
+                    nowPlayingElement.innerText = "STATION: IDLE";
+                }
+            };
+
+            // 4. Часы
+            setInterval(() => {
+                document.getElementById("clock").innerText =
+                    new Date().toLocaleTimeString();
+            }, 1000);
+        </script>
+    </body>
+</html>

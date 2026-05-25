@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
+import requests as http_requests
 from dotenv import load_dotenv
 
 # Сторонние модули
@@ -30,12 +31,14 @@ ARCHIVE_DIR = os.path.join(PROJECT_DIR, "archives")
 TEMP_DIR = os.path.join(PROJECT_DIR, "temp_speech")
 JINGLES_DIR = os.path.join(PROJECT_DIR, "jingles")
 LOG_FILE = os.path.join(PROJECT_DIR, "django-aws-terminal-websocket/dj_alyx_radio.log")
+REMOTE_LOG_URL = "https://djalyx.2077911.xyz/api/log/"
 
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 MUSIC_DIR = os.getenv("MUSIC_DIR")
 DB_PATH = os.getenv("DATA_BASE")
+ICECAST_PASSWORD = os.getenv("ICECAST_SOURCE_PASSWORD", "change_me_in_env")
 
 
 def tty_log(message, style="info"):
@@ -51,6 +54,12 @@ def tty_log(message, style="info"):
 
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(f"{full_message}\n")
+
+    try:
+        http_requests.post(REMOTE_LOG_URL, data=f"{full_message}\n".encode("utf-8"), timeout=2)
+    except Exception:
+        pass
+
     print(full_message, flush=True)
 
 
@@ -70,9 +79,10 @@ class CyberRadio:
         self.speech_buffer = None
         self.is_generating = False
         self.master_stream = None
+        self.fm_enabled = False  # Включить FM-выход через /tmp/grc_pipe
 
-        safe_pass = quote("ice1984Ocean", safe="")
-        self.icecast_url = f"icecast://source:{safe_pass}@localhost:8000/djalyx"
+        safe_pass = quote(ICECAST_PASSWORD, safe="")
+        self.icecast_url = f"icecast://source:{safe_pass}@132.243.22.20:8000/djalyx"
 
     async def monitor_ffmpeg_stderr(self):
         """Ловит ошибки FFmpeg в реальном времени"""
@@ -85,14 +95,16 @@ class CyberRadio:
                     break
                 text = line.decode("utf-8", errors="ignore").strip()
                 if any(
-                    err in text.lower()
-                    for err in [
-                        "error",
-                        "connection",
-                        "server",
-                        "pipe",
-                        "failed",
-                        "auth",
+                    phrase in text.lower()
+                    for phrase in [
+                        "http error",
+                        "error opening",
+                        "403 forbidden",
+                        "404 not found",
+                        "connection refused",
+                        "failed to connect",
+                        "authentication failed",
+                        "access denied",
                     ]
                 ):
                     tty_log(f"[FFMPEG DIAGNOSTIC] {text}", "error")
@@ -129,7 +141,7 @@ class CyberRadio:
         return None
 
     async def start_master_stream(self):
-        """Запуск основного вещания (Icecast + GNU Radio Pipe)"""
+        """Запуск основного вещания (Icecast, опционально FM)"""
         tty_log("[*] [System]: Подъем Master-узла вещания...")
 
         cmd = [
@@ -144,10 +156,19 @@ class CyberRadio:
             "2",
             "-i",
             "pipe:0",
-            "-filter_complex",
-            "[0:a]asplit=2[ice][grc]",
-            "-map",
-            "[ice]",
+        ]
+
+        if self.fm_enabled:
+            cmd += [
+                "-filter_complex",
+                "[0:a]asplit=2[ice][fm]",
+                "-map",
+                "[ice]",
+            ]
+        else:
+            cmd += ["-map", "0:a"]
+
+        cmd += [
             "-c:a",
             "libmp3lame",
             "-b:a",
@@ -155,34 +176,44 @@ class CyberRadio:
             "-f",
             "mp3",
             self.icecast_url,
-            "-map",
-            "[grc]",
-            "-f",
-            "s16le",
-            "-ar",
-            "48000",
-            "-ac",
-            "1",
-            "-flush_packets",
-            "1",
-            "/tmp/grc_pipe",
         ]
 
-        self.master_stream = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        if self.fm_enabled:
+            cmd += [
+                "-map",
+                "[fm]",
+                "-f",
+                "s16le",
+                "-ar",
+                "48000",
+                "-ac",
+                "1",
+                "-flush_packets",
+                "1",
+                "/tmp/grc_pipe",
+            ]
 
-        asyncio.create_task(self.monitor_ffmpeg_stderr())
-        await asyncio.sleep(2)
+        for attempt in range(3):
+            self.master_stream = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
 
-        if self.master_stream.returncode is not None:
+            asyncio.create_task(self.monitor_ffmpeg_stderr())
+            await asyncio.sleep(3)
+
+            if self.master_stream.returncode is None:
+                return
+
             tty_log(
-                f"[❌] FFmpeg Master не смог стартовать. Код: {self.master_stream.returncode}",
+                f"[❌] FFmpeg не смог стартовать (попытка {attempt + 1}/3). Код: {self.master_stream.returncode}",
                 "error",
             )
+            await asyncio.sleep(5)
+
+        tty_log("[❌] FFmpeg Master не смог стартовать после 3 попыток.", "error")
 
     async def play_single_file(self, track):
         if isinstance(track, str):
@@ -287,23 +318,30 @@ class CyberRadio:
         try:
             loop = asyncio.get_event_loop()
             artist = track["artist"]
-            lastfm = await loop.run_in_executor(None, search_artist_info, artist)
-            bio = (
-                lastfm.get("artist", {}).get("bio", {}).get("summary")
-                or track.get("cached_bio")
-                or f"Artist: {artist}"
-            )
+
+            try:
+                lastfm = await loop.run_in_executor(None, search_artist_info, artist)
+                bio = (
+                    lastfm.get("artist", {}).get("bio", {}).get("summary")
+                    if lastfm
+                    else None
+                )
+            except Exception:
+                bio = None
+
+            bio = bio or track.get("cached_bio") or f"Artist: {artist}"
 
             raw_speech = await loop.run_in_executor(
                 None, generate_dj_speech, bio, track["title"], artist
             )
-            # Извлекаем текст если пришел JSON
             speech_text = raw_speech
             if isinstance(raw_speech, str) and raw_speech.startswith("{"):
                 try:
                     speech_text = json.loads(raw_speech).get("content", raw_speech)
                 except:
                     pass
+            if not speech_text:
+                speech_text = f"Next track is {track['title']} by {artist}. Here we go!"
 
             chunks = self.split_text_to_chunks(speech_text)
             speech_files = []
@@ -428,6 +466,7 @@ class CyberRadio:
 
 if __name__ == "__main__":
     radio = CyberRadio()
+    radio.fm_enabled = "--fm" in sys.argv
     try:
         asyncio.run(radio.run_radio())
     except KeyboardInterrupt:
