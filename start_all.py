@@ -4,6 +4,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 
 import requests
 
@@ -133,8 +134,8 @@ def start_station():
 
             time.sleep(2)
 
-    except Exception as e:
-        print(f"Ошибка оркестрации: {e}")
+    except Exception:
+        print(f"Ошибка оркестрации:\n{traceback.format_exc()}")
     finally:
         cleanup()
 

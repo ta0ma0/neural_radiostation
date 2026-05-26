@@ -4,6 +4,7 @@ import json
 import os
 import random
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -11,6 +12,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
+
+signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
 import requests as http_requests
 from dotenv import load_dotenv
