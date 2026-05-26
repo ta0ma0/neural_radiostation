@@ -413,7 +413,7 @@ class CyberRadio:
                 tracks_played = self.tp
             except asyncio.TimeoutError:
                 tty_log("[WATCHDOG] Цикл радио завис", "error")
-                self._reset_master()
+                await self._reset_master()
             except Exception as e:
                 tty_log(f"[WATCHDOG] Ошибка цикла: {repr(e)}", "error")
                 await asyncio.sleep(3)
@@ -440,12 +440,18 @@ class CyberRadio:
                     tty_log("[ICECAST] Mount пропал — жду следующей проверки", "error")
                 elif self._icecast_missed >= 4:
                     tty_log("[ICECAST] Mount нет 60с — перезапуск", "error")
-                    self._reset_master()
+                    await self._reset_master()
 
-    def _reset_master(self):
-        if self.master_stream:
-            self.master_stream.terminate()
-            self.master_stream = None
+    async def _reset_master(self):
+        old = self.master_stream
+        self.master_stream = None
+        if old:
+            old.terminate()
+            try:
+                await asyncio.wait_for(old.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                old.kill()
+                await asyncio.wait_for(old.wait(), timeout=3)
         self._icecast_missed = 0
 
     async def _silence_filler(self):
@@ -468,7 +474,7 @@ class CyberRadio:
             await asyncio.sleep(2)
         elif getattr(self, '_icecast_missed', 0) >= 1:
             tty_log("[ICECAST] Mount отсутствовал — перезапуск мастер-стрима перед треком", "error")
-            self._reset_master()
+            await self._reset_master()
             await self.start_master_stream()
             await asyncio.sleep(2)
 
