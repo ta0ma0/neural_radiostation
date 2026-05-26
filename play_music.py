@@ -397,6 +397,8 @@ class CyberRadio:
 
         await self.start_master_stream()
 
+        asyncio.create_task(self._icemount_watchdog())
+
         tracks_played = 0
         min_before_dj = 3
 
@@ -418,6 +420,30 @@ class CyberRadio:
                 tty_log(f"[WATCHDOG] Ошибка цикла: {repr(e)}", "error")
                 await asyncio.sleep(3)
 
+    async def _icemount_watchdog(self):
+        while self.is_running:
+            await asyncio.sleep(30)
+            try:
+                import urllib.request, json
+                resp = urllib.request.urlopen("http://127.0.0.1:8000/status-json.xsl", timeout=5)
+                data = json.loads(resp.read())
+                sources = data.get("icestats", {}).get("source", [])
+                if isinstance(sources, dict):
+                    sources = [sources]
+                if sources:
+                    continue
+                tty_log("[WATCHDOG] Mount /djalyx пропал — перезапуск мастер-стрима", "error")
+            except Exception:
+                tty_log("[WATCHDOG] Не могу проверить Icecast — перезапуск", "error")
+
+            if self.master_stream:
+                self.master_stream.terminate()
+                await asyncio.sleep(2)
+            self.master_stream = None
+            self.playlist.clear()
+            await self.start_master_stream()
+            await asyncio.sleep(5)
+
     def _reset_master(self):
         if self.master_stream:
             self.master_stream.terminate()
@@ -430,26 +456,7 @@ class CyberRadio:
             await self.start_master_stream()
             await asyncio.sleep(2)
 
-        self._icecast_check = getattr(self, '_icecast_check', 0) + 1
-        if self._icecast_check >= 15:
-            self._icecast_check = 0
-            try:
-                import urllib.request, json
-                resp = urllib.request.urlopen("http://127.0.0.1:8000/status-json.xsl", timeout=5)
-                data = json.loads(resp.read())
-                sources = data.get("icestats", {}).get("source", [])
-                if isinstance(sources, dict):
-                    sources = [sources]
-                if not sources:
-                    tty_log("[ICECAST] Mount пропал — перезапуск мастер-стрима", "error")
-                    self.master_stream.terminate()
-                    await asyncio.sleep(2)
-                    self.master_stream = None
-                    self.playlist.clear()
-                    await self.start_master_stream()
-                    await asyncio.sleep(3)
-            except Exception:
-                pass
+
 
         if not self.is_generating and not self.speech_buffer:
             future = self.get_random_track()
