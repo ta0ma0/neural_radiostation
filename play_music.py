@@ -82,7 +82,8 @@ class CyberRadio:
         self.speech_buffer = None
         self.is_generating = False
         self.master_stream = None
-        self.fm_enabled = False  # Включить FM-выход через /tmp/grc_pipe
+        self.fm_enabled = False
+        self._playing = False
 
         safe_pass = quote(ICECAST_PASSWORD, safe="")
         self.icecast_url = f"icecast://source:{safe_pass}@132.243.22.20:8000/djalyx"
@@ -229,6 +230,7 @@ class CyberRadio:
             return
 
         tty_log(f"{track.get('artist')} — {track.get('title')}", "on_air")
+        self._playing = True
 
         cmd = [
             "ffmpeg",
@@ -251,6 +253,7 @@ class CyberRadio:
         except Exception as e:
             tty_log(f"Ошибка трансляции трека: {repr(e)}", "error")
         finally:
+            self._playing = False
             try:
                 if decoder.returncode is None:
                     decoder.terminate()
@@ -396,6 +399,7 @@ class CyberRadio:
 
         self._icecast_missed = 0
         asyncio.create_task(self._icemount_logger())
+        asyncio.create_task(self._silence_filler())
 
         tracks_played = 0
         min_before_dj = 3
@@ -443,6 +447,19 @@ class CyberRadio:
             self.master_stream.terminate()
             self.master_stream = None
         self._icecast_missed = 0
+
+    async def _silence_filler(self):
+        silence = b"\x00\x00" * 4096
+        while self.is_running:
+            await asyncio.sleep(5)
+            if self._playing:
+                continue
+            try:
+                if self.master_stream and self.master_stream.returncode is None:
+                    self.master_stream.stdin.write(silence)
+                    await asyncio.wait_for(self.master_stream.stdin.drain(), timeout=2)
+            except Exception:
+                pass
 
     async def _radio_cycle(self, tracks_played, min_before_dj, music_base, jingle_base, temp_base):
         if self.master_stream is None or self.master_stream.returncode is not None:
