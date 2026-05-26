@@ -356,6 +356,7 @@ class CyberRadio:
                 except:
                     pass
             if not speech_text:
+                tty_log("[⚙️ AI] LLM (LM Studio) недоступна на localhost:1234 — заглушка", "error")
                 speech_text = f"Next track is {track['title']} by {artist}. Here we go!"
 
             chunks = self.split_text_to_chunks(speech_text)
@@ -371,8 +372,10 @@ class CyberRadio:
                 self.speech_buffer = {"track": track, "speech_files": speech_files}
                 tty_log(f"Подготовлена подводка для {artist}", "ai")
                 asyncio.create_task(self.archive_speech(track, speech_files))
+            else:
+                tty_log(f"[⚙️ AI] TTS не сгенерировал аудио для {artist} — проверь F5-TTS", "error")
         except Exception as e:
-            print(f"AI Gen Error: {e}")
+            tty_log(f"[⚙️ AI] Ошибка генерации: {repr(e)}", "error")
         finally:
             self.is_generating = False
 
