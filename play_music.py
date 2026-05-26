@@ -394,7 +394,8 @@ class CyberRadio:
 
         await self.start_master_stream()
 
-        asyncio.create_task(self._icemount_watchdog())
+        self._icecast_missed = 0
+        asyncio.create_task(self._icemount_logger())
 
         tracks_played = 0
         min_before_dj = 3
@@ -408,18 +409,15 @@ class CyberRadio:
                 tracks_played = self.tp
             except asyncio.TimeoutError:
                 tty_log("[WATCHDOG] Цикл радио завис", "error")
-                if self.master_stream:
-                    self.master_stream.terminate()
-                await asyncio.sleep(2)
-                self.master_stream = None
-                self.playlist.clear()
+                self._reset_master()
             except Exception as e:
                 tty_log(f"[WATCHDOG] Ошибка цикла: {repr(e)}", "error")
                 await asyncio.sleep(3)
 
-    async def _icemount_watchdog(self):
+    async def _icemount_logger(self):
         while self.is_running:
             await asyncio.sleep(15)
+            ok = False
             try:
                 import urllib.request, json
                 resp = urllib.request.urlopen("http://127.0.0.1:8000/status-json.xsl", timeout=5)
@@ -428,32 +426,34 @@ class CyberRadio:
                 if isinstance(sources, dict):
                     sources = [sources]
                 if sources:
-                    continue
-                tty_log("[WATCHDOG] Mount /djalyx пропал — перезапуск мастер-стрима", "error")
+                    self._icecast_missed = 0
+                    ok = True
             except Exception:
-                tty_log("[WATCHDOG] Не могу проверить Icecast — перезапуск", "error")
-
-            if self.master_stream:
-                self.master_stream.terminate()
-                await asyncio.sleep(2)
-            self.master_stream = None
-            self.playlist.clear()
-            await self.start_master_stream()
-            await asyncio.sleep(5)
+                pass
+            if not ok:
+                self._icecast_missed += 1
+                if self._icecast_missed == 1:
+                    tty_log("[ICECAST] Mount пропал — жду следующей проверки", "error")
+                elif self._icecast_missed >= 4:
+                    tty_log("[ICECAST] Mount нет 60с — перезапуск", "error")
+                    self._reset_master()
 
     def _reset_master(self):
         if self.master_stream:
             self.master_stream.terminate()
             self.master_stream = None
-        self.playlist.clear()
+        self._icecast_missed = 0
 
     async def _radio_cycle(self, tracks_played, min_before_dj, music_base, jingle_base, temp_base):
         if self.master_stream is None or self.master_stream.returncode is not None:
             tty_log("Master-стрим упал, рестарт...", "error")
             await self.start_master_stream()
             await asyncio.sleep(2)
-
-
+        elif getattr(self, '_icecast_missed', 0) >= 1:
+            tty_log("[ICECAST] Mount отсутствовал — перезапуск мастер-стрима перед треком", "error")
+            self._reset_master()
+            await self.start_master_stream()
+            await asyncio.sleep(2)
 
         if not self.is_generating and not self.speech_buffer:
             future = self.get_random_track()
