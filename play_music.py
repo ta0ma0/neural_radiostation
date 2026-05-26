@@ -175,7 +175,7 @@ class CyberRadio:
             "-c:a",
             "libmp3lame",
             "-b:a",
-            "192k",
+            "128k",
             "-f",
             "mp3",
             self.icecast_url,
@@ -269,11 +269,11 @@ class CyberRadio:
 
     async def _stream_track(self, decoder):
         while True:
-            chunk = await asyncio.wait_for(decoder.stdout.read(16384), timeout=30)
+            chunk = await asyncio.wait_for(decoder.stdout.read(16384), timeout=60)
             if not chunk:
                 break
             self.master_stream.stdin.write(chunk)
-            await asyncio.wait_for(self.master_stream.stdin.drain(), timeout=10)
+            await asyncio.wait_for(self.master_stream.stdin.drain(), timeout=120)
 
     def split_text_to_chunks(self, text, max_chunk_size=150):
         if not text:
