@@ -253,15 +253,18 @@ class CyberRadio:
         except Exception as e:
             tty_log(f"Ошибка трансляции трека: {repr(e)}", "error")
         finally:
-            if decoder.returncode is None:
-                decoder.terminate()
-                try:
-                    await asyncio.wait_for(decoder.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    decoder.kill()
-                    await decoder.wait()
-            else:
-                await decoder.wait()
+            try:
+                if decoder.returncode is None:
+                    decoder.terminate()
+                    try:
+                        await asyncio.wait_for(decoder.wait(), timeout=5)
+                    except asyncio.TimeoutError:
+                        decoder.kill()
+                        await asyncio.wait_for(decoder.wait(), timeout=3)
+                else:
+                    await asyncio.wait_for(decoder.wait(), timeout=3)
+            except Exception:
+                pass
 
     async def _stream_track(self, decoder):
         while True:
@@ -394,85 +397,95 @@ class CyberRadio:
         min_before_dj = 3
 
         while self.is_running:
-            if self.master_stream.returncode is not None:
-                tty_log("Master-стрим упал, рестарт...", "error")
-                await self.start_master_stream()
+            try:
+                await asyncio.wait_for(
+                    self._radio_cycle(tracks_played, min_before_dj, music_base, jingle_base, temp_base),
+                    timeout=600,
+                )
+                tracks_played = self.tp
+            except asyncio.TimeoutError:
+                tty_log("[WATCHDOG] Цикл радио завис", "error")
+                if self.master_stream:
+                    self.master_stream.terminate()
+                await asyncio.sleep(2)
+                self.master_stream = None
+                self.playlist.clear()
+            except Exception as e:
+                tty_log(f"[WATCHDOG] Ошибка цикла: {repr(e)}", "error")
+                await asyncio.sleep(3)
 
-            # Фоновая генерация, если Аликс молчит
-            if not self.is_generating and not self.speech_buffer:
-                future = self.get_random_track()
-                if future:
-                    asyncio.create_task(self.background_speech_generator(future))
+    def _reset_master(self):
+        if self.master_stream:
+            self.master_stream.terminate()
+            self.master_stream = None
+        self.playlist.clear()
 
-            # Формируем очередь
-            if not self.playlist:
-                # ПРОВЕРКА: Пора ли выходить Аликс?
-                if self.speech_buffer and tracks_played >= min_before_dj:
-                    tty_log(
-                        f"--- [ DJ ALYX НА ВЫЛЕТЕ: {tracks_played} трека пройдено ] ---",
-                        "on_air",
+    async def _radio_cycle(self, tracks_played, min_before_dj, music_base, jingle_base, temp_base):
+        if self.master_stream is None or self.master_stream.returncode is not None:
+            tty_log("Master-стрим упал, рестарт...", "error")
+            await self.start_master_stream()
+            await asyncio.sleep(2)
+
+        if not self.is_generating and not self.speech_buffer:
+            future = self.get_random_track()
+            if future:
+                asyncio.create_task(self.background_speech_generator(future))
+
+        if not self.playlist:
+            if self.speech_buffer and tracks_played >= min_before_dj:
+                tty_log(
+                    f"--- [ DJ ALYX НА ВЫЛЕТЕ: {tracks_played} трека пройдено ] ---",
+                    "on_air",
+                )
+                data = self.speech_buffer
+                self.speech_buffer = None
+                tracks_played = 0
+
+                jingles = [f for f in os.listdir(jingle_base) if f.endswith(".mp3")]
+                if jingles:
+                    self.playlist.append({
+                        "path": os.path.join(jingle_base, random.choice(jingles)),
+                        "artist": "System", "title": "Jingle",
+                    })
+
+                for sf in data["speech_files"]:
+                    self.playlist.append(
+                        {"path": sf["path"], "artist": "DJ Alyx", "title": "Speech"}
                     )
-                    data = self.speech_buffer
-                    self.speech_buffer = None
-                    tracks_played = 0
 
-                    # Добавляем джингл
-                    jingles = [f for f in os.listdir(jingle_base) if f.endswith(".mp3")]
-                    if jingles:
-                        self.playlist.append(
-                            {
-                                "path": os.path.join(
-                                    jingle_base, random.choice(jingles)
-                                ),
-                                "artist": "System",
-                                "title": "Jingle",
-                            }
-                        )
-
-                    # Добавляем речь
-                    for sf in data["speech_files"]:
-                        self.playlist.append(
-                            {"path": sf["path"], "artist": "DJ Alyx", "title": "Speech"}
-                        )
-
-                    # Добавляем целевой трек
-                    t_info = data["track"]
-                    t_info["path"] = os.path.join(music_base, t_info["path"])
-                    self.playlist.append(t_info)
-                else:
-                    # Обычный режим наполнения плейлиста
-                    t = self.get_random_track()
-                    if t:
-                        t["path"] = os.path.join(music_base, t["path"])
-                        self.playlist.append(t)
-
-            # ИГРАЕМ ТРЕК
-            if self.playlist:
-                item = self.playlist.pop(0)
-                # Важно: нормализуем путь перед проверкой
-                current_path = os.path.normpath(os.path.abspath(item["path"]))
-
-                await self.play_single_file(item)
-
-                # --- ЛОГИКА ОТСЧЕТА (ИСПРАВЛЕННАЯ) ---
-                is_jingle = current_path.startswith(os.path.normpath(jingle_base))
-                is_speech = current_path.startswith(os.path.normpath(temp_base))
-                is_music = current_path.startswith(os.path.normpath(music_base))
-
-                if is_music and not is_jingle and not is_speech:
-                    tracks_played += 1
-                    tty_log(f"📈 Счетчик: {tracks_played}/{min_before_dj}", "info")
-                else:
-                    tty_log(f"⏸ Технический блок (не в счет)", "info")
-
-                # Удаление временной речи
-                if is_speech:
-                    try:
-                        os.remove(current_path)
-                    except:
-                        pass
+                t_info = data["track"]
+                t_info["path"] = os.path.join(music_base, t_info["path"])
+                self.playlist.append(t_info)
             else:
-                await asyncio.sleep(1)
+                t = self.get_random_track()
+                if t:
+                    t["path"] = os.path.join(music_base, t["path"])
+                    self.playlist.append(t)
+
+        if self.playlist:
+            item = self.playlist.pop(0)
+            current_path = os.path.normpath(os.path.abspath(item["path"]))
+            await self.play_single_file(item)
+
+            is_jingle = current_path.startswith(os.path.normpath(jingle_base))
+            is_speech = current_path.startswith(os.path.normpath(temp_base))
+            is_music = current_path.startswith(os.path.normpath(music_base))
+
+            if is_music and not is_jingle and not is_speech:
+                tracks_played += 1
+                tty_log(f"📈 Счетчик: {tracks_played}/{min_before_dj}", "info")
+            else:
+                tty_log(f"⏸ Технический блок (не в счет)", "info")
+
+            if is_speech:
+                try:
+                    os.remove(current_path)
+                except:
+                    pass
+        else:
+            await asyncio.sleep(1)
+
+        self.tp = tracks_played
 
 
 if __name__ == "__main__":
