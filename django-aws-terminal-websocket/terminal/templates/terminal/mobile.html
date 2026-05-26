@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>DJ ALYX</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #050505;
+            color: #00ff41;
+            font-family: 'Courier New', monospace;
+            min-height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 1.8em;
+            letter-spacing: 4px;
+            margin-bottom: 4px;
+        }
+        .sub {
+            color: #003b00;
+            font-size: 0.8em;
+            margin-bottom: 30px;
+        }
+        .stream-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: 3px solid #00ff41;
+            background: transparent;
+            color: #00ff41;
+            font-size: 2em;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 20px auto;
+            transition: 0.2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .stream-btn.playing {
+            box-shadow: 0 0 30px rgba(0,255,65,0.3);
+        }
+        .stream-btn:active {
+            transform: scale(0.92);
+        }
+        #now-playing {
+            color: #00ff41;
+            font-size: 0.9em;
+            min-height: 1.4em;
+            margin-top: 10px;
+        }
+        #status {
+            color: #003b00;
+            font-size: 0.75em;
+            margin-top: 20px;
+        }
+        .listeners {
+            color: #003b00;
+            font-size: 0.7em;
+            margin-top: 8px;
+        }
+        audio { display: none; }
+    </style>
+</head>
+<body>
+    <h1>DJ ALYX</h1>
+    <div class="sub">neural radio station</div>
+
+    <button id="play-btn" class="stream-btn">&#9654;</button>
+    <div id="now-playing">STATION: IDLE</div>
+
+    <div class="listeners">LISTENERS: <span id="listeners-count">0</span></div>
+    <div id="status">signal lost</div>
+
+    <audio id="player" preload="none"></audio>
+
+    <script>
+        const player = document.getElementById('player');
+        const btn = document.getElementById('play-btn');
+        const nowPlaying = document.getElementById('now-playing');
+        const statusBar = document.getElementById('status');
+        const listenersSpan = document.getElementById('listeners-count');
+
+        const streamUrl = '/stream/djalyx';
+
+        let ws = null;
+
+        function connectWs() {
+            const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${proto}://${window.location.host}/ws/terminal/`);
+
+            ws.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.track) {
+                        nowPlaying.textContent = 'PLAYING: ' + data.track;
+                    }
+                    if (data.listeners !== undefined) {
+                        listenersSpan.textContent = data.listeners;
+                    }
+                } catch (_) {}
+            };
+
+            ws.onclose = () => {
+                setTimeout(connectWs, 3000);
+            };
+        }
+
+        btn.onclick = () => {
+            if (player.paused) {
+                player.src = streamUrl;
+                player.play().then(() => {
+                    btn.innerHTML = '&#9646;&#9646;';
+                    btn.classList.add('playing');
+                    nowPlaying.textContent = 'STATION: ON AIR';
+                    statusBar.textContent = 'connected';
+                    statusBar.style.color = '#00ff41';
+                }).catch(() => {
+                    statusBar.textContent = 'playback blocked';
+                    statusBar.style.color = '#ff0041';
+                });
+            } else {
+                player.pause();
+                player.src = '';
+                btn.innerHTML = '&#9654;';
+                btn.classList.remove('playing');
+                nowPlaying.textContent = 'STATION: IDLE';
+                statusBar.textContent = 'disconnected';
+                statusBar.style.color = '#003b00';
+            }
+        };
+
+        connectWs();
+    </script>
+</body>
+</html>

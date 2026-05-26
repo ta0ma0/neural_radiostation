@@ -18,12 +18,14 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from terminal.views import terminal_view
+from terminal.views import mobile_view
 from terminal.views import health_check_view
 from terminal.views import log_receive_view
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", terminal_view, name="terminal"),
+    path("mobile/", mobile_view, name="mobile"),
     path("health-check/", health_check_view, name="health-check"),
     path("api/log/", log_receive_view, name="log-receive"),
 ]

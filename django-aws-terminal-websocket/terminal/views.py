@@ -22,6 +22,10 @@ except ImportError:
 def terminal_view(request):
     return render(request, "terminal/terminal.html")
 
+@traced_function()
+def mobile_view(request):
+    return render(request, "terminal/mobile.html")
+
 
 @traced_function()
 def health_check_view(request):
