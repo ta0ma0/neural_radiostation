@@ -32,6 +32,17 @@
             font-size: 0.8em;
             margin-bottom: 30px;
         }
+        #air-badge {
+            display: inline-block;
+            padding: 3px 12px;
+            border-radius: 10px;
+            font-size: 0.7em;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+        }
+        .air-on { background: #00ff41; color: #050505; }
+        .air-off { background: #331100; color: #ff4400; }
         .stream-btn {
             width: 80px;
             height: 80px;
@@ -77,6 +88,7 @@
     <h1>DJ ALYX</h1>
     <div class="sub">neural radio station</div>
 
+    <div id="air-badge" class="air-off">OFF AIR</div>
     <button id="play-btn" class="stream-btn">&#9654;</button>
     <div id="now-playing">STATION: IDLE</div>
 
@@ -122,6 +134,32 @@
         }
 
         connectWs();
+
+        // Статус вещания — опрос Icecast через Django
+        const badge = document.getElementById('air-badge');
+        let offAirSince = null;
+
+        async function checkStatus() {
+            try {
+                const r = await fetch('/api/status/');
+                const s = await r.json();
+                if (s.streaming) {
+                    badge.className = 'air-on';
+                    badge.textContent = 'ON AIR';
+                    offAirSince = null;
+                    listenersSpan.textContent = s.listeners;
+                } else {
+                    badge.className = 'air-off';
+                    badge.textContent = 'OFF AIR';
+                    if (!offAirSince) offAirSince = Date.now();
+                }
+            } catch (_) {
+                badge.className = 'air-off';
+                badge.textContent = 'OFF AIR';
+            }
+        }
+        setInterval(checkStatus, 15000);
+        checkStatus();
 
         // Wake Lock — не даём экрану гаснуть
         let wakeLock = null;

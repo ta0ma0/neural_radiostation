@@ -24,6 +24,7 @@ from terminal.views import terminal_view
 from terminal.views import mobile_view
 from terminal.views import health_check_view
 from terminal.views import log_receive_view
+from terminal.views import stream_status_view
 
 BASE = Path(__file__).resolve().parent.parent
 STATIC = BASE / "terminal" / "static" / "terminal"
@@ -39,6 +40,7 @@ urlpatterns = [
     path("mobile/", mobile_view, name="mobile"),
     path("health-check/", health_check_view, name="health-check"),
     path("api/log/", log_receive_view, name="log-receive"),
+    path("api/status/", stream_status_view, name="stream-status"),
     path("manifest.json", lambda r: FileResponse(
         open(BASE / "terminal" / "templates" / "terminal" / "manifest.json", "rb"),
         content_type="application/json",

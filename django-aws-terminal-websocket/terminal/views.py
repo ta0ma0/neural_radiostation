@@ -37,6 +37,32 @@ def health_check_view(request):
     return JsonResponse({"status": "ok", "cache_value": cached_value})
 
 
+ICECAST_STATUS_URL = "http://127.0.0.1:8000/status-json.xsl"
+
+
+@traced_function()
+def stream_status_view(request):
+    try:
+        import urllib.request
+        import xml.etree.ElementTree as ET
+
+        resp = urllib.request.urlopen(ICECAST_STATUS_URL, timeout=5)
+        data = json.loads(resp.read())
+        sources = data.get("icestats", {}).get("source", [])
+        if isinstance(sources, dict):
+            sources = [sources]
+    except Exception:
+        return JsonResponse({"streaming": False, "listeners": 0, "source": None})
+
+    source = sources[0] if sources else None
+    return JsonResponse({
+        "streaming": source is not None,
+        "listeners": int(source.get("listeners", 0)) if source else 0,
+        "source": source.get("server_name") if source else None,
+        "bitrate": int(source.get("bitrate", 0)) if source else 0,
+    })
+
+
 @csrf_exempt
 @require_POST
 def log_receive_view(request):

@@ -98,6 +98,17 @@
                 color: var(--main-green);
                 padding: 2px 8px;
             }
+            #air-badge {
+                display: inline-block;
+                padding: 1px 8px;
+                border-radius: 8px;
+                font-size: 0.7em;
+                font-weight: bold;
+                letter-spacing: 1px;
+                margin-left: 10px;
+            }
+            .air-on { background: var(--main-green); color: var(--bg-color); }
+            .air-off { background: #331100; color: #ff4400; }
 
             /* Кастомизация Xterm */
             /* Увеличиваем ширину терминала */
@@ -124,6 +135,7 @@
         <div id="status-bar">
             <div class="controls">
                 <span>DJ ALYX v1.0.4 // LOCALHOST:8000</span>
+                <span id="air-badge" class="air-off">OFF AIR</span>
                 <button id="play-pause" class="btn">
                     [ CONNECT TO STREAM ]
                 </button>
@@ -212,7 +224,23 @@
                 }
             };
 
-            // 4. Часы
+            // 4. Статус вещания
+            const airBadge = document.getElementById('air-badge');
+            async function checkStatus() {
+                try {
+                    const r = await fetch('/api/status/');
+                    const s = await r.json();
+                    airBadge.className = s.streaming ? 'air-on' : 'air-off';
+                    airBadge.textContent = s.streaming ? 'ON AIR' : 'OFF AIR';
+                } catch (_) {
+                    airBadge.className = 'air-off';
+                    airBadge.textContent = 'OFF AIR';
+                }
+            }
+            setInterval(checkStatus, 15000);
+            checkStatus();
+
+            // 5. Часы
             setInterval(() => {
                 document.getElementById("clock").innerText =
                     new Date().toLocaleTimeString();
