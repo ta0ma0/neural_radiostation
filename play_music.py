@@ -247,18 +247,29 @@ class CyberRadio:
         )
 
         try:
-            while True:
-                chunk = await decoder.stdout.read(16384)
-                if not chunk:
-                    break
-                self.master_stream.stdin.write(chunk)
-                await self.master_stream.stdin.drain()
+            await asyncio.wait_for(self._stream_track(decoder), timeout=300)
+        except asyncio.TimeoutError:
+            tty_log(f"⏰ Таймаут трека: {track.get('artist', '?')} — {track.get('title', '?')}", "error")
         except Exception as e:
             tty_log(f"Ошибка трансляции трека: {repr(e)}", "error")
         finally:
             if decoder.returncode is None:
                 decoder.terminate()
-            await decoder.wait()
+                try:
+                    await asyncio.wait_for(decoder.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    decoder.kill()
+                    await decoder.wait()
+            else:
+                await decoder.wait()
+
+    async def _stream_track(self, decoder):
+        while True:
+            chunk = await asyncio.wait_for(decoder.stdout.read(16384), timeout=30)
+            if not chunk:
+                break
+            self.master_stream.stdin.write(chunk)
+            await asyncio.wait_for(self.master_stream.stdin.drain(), timeout=10)
 
     def split_text_to_chunks(self, text, max_chunk_size=150):
         if not text:
