@@ -247,9 +247,7 @@ class CyberRadio:
         )
 
         try:
-            await asyncio.wait_for(self._stream_track(decoder), timeout=300)
-        except asyncio.TimeoutError:
-            tty_log(f"⏰ Таймаут трека: {track.get('artist', '?')} — {track.get('title', '?')}", "error")
+            await self._stream_track(decoder)
         except Exception as e:
             tty_log(f"Ошибка трансляции трека: {repr(e)}", "error")
         finally:
@@ -400,7 +398,7 @@ class CyberRadio:
             try:
                 await asyncio.wait_for(
                     self._radio_cycle(tracks_played, min_before_dj, music_base, jingle_base, temp_base),
-                    timeout=600,
+                    timeout=1800,
                 )
                 tracks_played = self.tp
             except asyncio.TimeoutError:
