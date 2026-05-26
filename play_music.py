@@ -196,7 +196,8 @@ class CyberRadio:
                 "/tmp/grc_pipe",
             ]
 
-        for attempt in range(3):
+        delay = 2
+        while True:
             self.master_stream = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
@@ -210,13 +211,9 @@ class CyberRadio:
             if self.master_stream.returncode is None:
                 return
 
-            tty_log(
-                f"[❌] FFmpeg не смог стартовать (попытка {attempt + 1}/3). Код: {self.master_stream.returncode}",
-                "error",
-            )
-            await asyncio.sleep(5)
-
-        tty_log("[❌] FFmpeg Master не смог стартовать после 3 попыток.", "error")
+            tty_log(f"[❌] FFmpeg не стартовал (код {self.master_stream.returncode}). Ждём {delay}с...", "error")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 30)
 
     async def play_single_file(self, track):
         if isinstance(track, str):
@@ -422,7 +419,7 @@ class CyberRadio:
 
     async def _icemount_watchdog(self):
         while self.is_running:
-            await asyncio.sleep(30)
+            await asyncio.sleep(15)
             try:
                 import urllib.request, json
                 resp = urllib.request.urlopen("http://127.0.0.1:8000/status-json.xsl", timeout=5)
