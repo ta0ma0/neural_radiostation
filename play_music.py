@@ -231,7 +231,7 @@ class CyberRadio:
             await asyncio.sleep(1)
             try:
                 import urllib.request, json
-                resp = urllib.request.urlopen("http://127.0.0.1:8000/status-json.xsl", timeout=3)
+                resp = urllib.request.urlopen("http://132.243.22.20:8000/status-json.xsl", timeout=3)
                 data = json.loads(resp.read())
                 sources = data.get("icestats", {}).get("source", [])
                 if isinstance(sources, dict):
@@ -450,7 +450,7 @@ class CyberRadio:
             ok = False
             try:
                 import urllib.request, json
-                resp = urllib.request.urlopen("http://127.0.0.1:8000/status-json.xsl", timeout=5)
+                resp = urllib.request.urlopen("http://132.243.22.20:8000/status-json.xsl", timeout=5)
                 data = json.loads(resp.read())
                 sources = data.get("icestats", {}).get("source", [])
                 if isinstance(sources, dict):
@@ -475,12 +475,11 @@ class CyberRadio:
         old = self.master_stream
         self.master_stream = None
         if old:
-            old.terminate()
+            old.kill()
             try:
-                await asyncio.wait_for(old.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                old.kill()
-                await asyncio.wait_for(old.wait(), timeout=3)
+                await asyncio.wait_for(old.wait(), timeout=2)
+            except Exception:
+                pass
         self._icecast_missed = 0
         self._resetting = False
 
@@ -498,16 +497,8 @@ class CyberRadio:
                 pass
 
     async def _radio_cycle(self, tracks_played, min_before_dj, music_base, jingle_base, temp_base):
-        if getattr(self, '_resetting', False):
-            return self.tp if hasattr(self, 'tp') else tracks_played
-
         if self.master_stream is None or self.master_stream.returncode is not None:
             tty_log("Master-стрим упал, рестарт...", "error")
-            await self.start_master_stream()
-            await asyncio.sleep(2)
-        elif getattr(self, '_icecast_missed', 0) >= 1:
-            tty_log("[ICECAST] Mount отсутствовал — перезапуск мастер-стрима перед треком", "error")
-            await self._reset_master()
             await self.start_master_stream()
             await asyncio.sleep(2)
 
