@@ -1,8 +1,19 @@
 # DJ ALYX — Neural Radio Station
 
 **Listen live:** [https://djalyx.2077911.xyz/](https://djalyx.2077911.xyz/)
+**Stream For Mobile** [https://djalyx.2077911.xyz/mobile](https://djalyx.2077911.xyz/mobile)
 
 AI-powered radio station with a neural DJ. Plays music from a local collection, generates live commentary via LLM, and voices it with neural TTS.
+
+<details>
+<summary>Нажмите, чтобы развернуть (заголовок)</summary>
+- О музыке: локальная коллекция 76 Гб, IDM, DarckSynth, ChipTune. 
+- Станция в разработке, любые отзывы, предложения по улучшению и даже желаемую музыку в ротацию можно и нужно отправлять на адрес stend003@yandex.ru
+- Может прерываться, зависать, внезапно выключаться, сейчас радио не в потребителькоом состоянии.
+- Серверы оплачены на 3 месяца, дальше будет видно.
+![Elvis](images/Gemini_Generated_Image_taeymrtaeymrtaey.png)
+</details>
+
 
 ## Status
 
