@@ -205,12 +205,17 @@
             const playBtn = document.getElementById("play-pause");
             const nowPlayingElement = document.getElementById("now-playing");
 
+            let reconnectTimer = null;
+            let userDisconnected = false;
+
             playBtn.onclick = () => {
                 if (audio.paused) {
-                    audio.play();
+                    userDisconnected = false;
+                    audio.play().catch(() => {});
                     playBtn.innerText = "[ DISCONNECT ]";
                     nowPlayingElement.innerText = "STATION: ON AIR";
                 } else {
+                    userDisconnected = true;
                     audio.pause();
                     audio.src = audio.src;
                     playBtn.innerText = "[ CONNECT TO STREAM ]";
@@ -218,15 +223,44 @@
                 }
             };
 
-            // 4. Статус вещания
+            function tryReconnect() {
+                if (userDisconnected) return;
+                audio.src = '/stream/djalyx';
+                audio.play().catch(() => {});
+                playBtn.innerText = "[ DISCONNECT ]";
+                nowPlayingElement.innerText = "STATION: ON AIR";
+            }
+
+            audio.addEventListener('error', () => {
+                if (!userDisconnected) {
+                    nowPlayingElement.innerText = "STATION: RECONNECTING...";
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(tryReconnect, 3000);
+                }
+            });
+
+            audio.addEventListener('stalled', () => {
+                if (!userDisconnected) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(tryReconnect, 5000);
+                }
+            });
+
+            // 4. Статус вещания + авто-восстановление
+            let wasOffline = false;
             async function checkStatus() {
                 const el = document.getElementById('now-playing');
                 try {
                     const r = await fetch('/api/status/');
                     const s = await r.json();
                     el.className = s.streaming ? 'air-on' : 'air-off';
+                    if (s.streaming && wasOffline && !audio.paused && !userDisconnected) {
+                        tryReconnect();
+                    }
+                    wasOffline = !s.streaming;
                 } catch (_) {
                     el.className = 'air-off';
+                    wasOffline = true;
                 }
             }
             setInterval(checkStatus, 15000);

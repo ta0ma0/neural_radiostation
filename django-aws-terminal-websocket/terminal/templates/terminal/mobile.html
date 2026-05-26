@@ -138,7 +138,35 @@
         // Статус вещания — опрос Icecast через Django
         const badge = document.getElementById('air-badge');
         let offAirSince = null;
+        let userDisconnected = false;
 
+        function tryReconnect() {
+            if (userDisconnected) return;
+            player.src = streamUrl;
+            player.play().then(() => {
+                btn.innerHTML = '&#9646;&#9646;';
+                btn.classList.add('playing');
+                nowPlaying.textContent = 'STATION: ON AIR';
+                statusBar.textContent = 'connected';
+                statusBar.style.color = '#00ff41';
+                requestWakeLock();
+            }).catch(() => {});
+        }
+
+        player.addEventListener('error', () => {
+            if (!userDisconnected) {
+                nowPlaying.textContent = 'RECONNECTING...';
+                setTimeout(tryReconnect, 3000);
+            }
+        });
+
+        player.addEventListener('stalled', () => {
+            if (!userDisconnected) {
+                setTimeout(tryReconnect, 5000);
+            }
+        });
+
+        let wasOffline = false;
         async function checkStatus() {
             try {
                 const r = await fetch('/api/status/');
@@ -148,14 +176,19 @@
                     badge.textContent = 'ON AIR';
                     offAirSince = null;
                     listenersSpan.textContent = s.listeners;
+                    if (wasOffline && !player.paused && !userDisconnected) {
+                        tryReconnect();
+                    }
                 } else {
                     badge.className = 'air-off';
                     badge.textContent = 'OFF AIR';
                     if (!offAirSince) offAirSince = Date.now();
                 }
+                wasOffline = !s.streaming;
             } catch (_) {
                 badge.className = 'air-off';
                 badge.textContent = 'OFF AIR';
+                wasOffline = true;
             }
         }
         setInterval(checkStatus, 15000);
@@ -174,6 +207,7 @@
         });
         btn.onclick = () => {
             if (player.paused) {
+                userDisconnected = false;
                 player.src = streamUrl;
                 player.play().then(() => {
                     btn.innerHTML = '&#9646;&#9646;';
@@ -187,6 +221,7 @@
                     statusBar.style.color = '#ff0041';
                 });
             } else {
+                userDisconnected = true;
                 player.pause();
                 player.src = '';
                 btn.innerHTML = '&#9654;';
