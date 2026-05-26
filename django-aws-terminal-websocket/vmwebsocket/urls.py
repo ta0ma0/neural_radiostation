@@ -16,11 +16,22 @@ Including another URLconf
 """
 
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, re_path
+from django.http import FileResponse
+from pathlib import Path
+
 from terminal.views import terminal_view
 from terminal.views import mobile_view
 from terminal.views import health_check_view
 from terminal.views import log_receive_view
+
+BASE = Path(__file__).resolve().parent.parent
+STATIC = BASE / "terminal" / "static" / "terminal"
+
+
+def static_file(path, content_type):
+    return lambda r: FileResponse(open(STATIC / path, "rb"), content_type=content_type)
+
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -28,4 +39,11 @@ urlpatterns = [
     path("mobile/", mobile_view, name="mobile"),
     path("health-check/", health_check_view, name="health-check"),
     path("api/log/", log_receive_view, name="log-receive"),
+    path("manifest.json", lambda r: FileResponse(
+        open(BASE / "terminal" / "templates" / "terminal" / "manifest.json", "rb"),
+        content_type="application/json",
+    )),
+    path("sw.js", static_file("sw.js", "application/javascript")),
+    path("static/terminal/icon-192.png", static_file("icon-192.png", "image/png")),
+    path("static/terminal/icon-512.png", static_file("icon-512.png", "image/png")),
 ]

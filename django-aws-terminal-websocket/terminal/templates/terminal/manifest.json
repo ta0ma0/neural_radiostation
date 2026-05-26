@@ -1,0 +1,21 @@
+{
+  "name": "DJ ALYX Radio",
+  "short_name": "DJ ALYX",
+  "description": "Neural radio station",
+  "start_url": "/mobile/",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#00ff41",
+  "icons": [
+    {
+      "src": "/static/terminal/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/terminal/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

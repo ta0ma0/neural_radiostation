@@ -3,6 +3,10 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#050505" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/static/terminal/icon-192.png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/static/terminal/icon-192.png" />
     <title>DJ ALYX</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -82,6 +86,10 @@
     <audio id="player" preload="none"></audio>
 
     <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js');
+        }
+
         const player = document.getElementById('player');
         const btn = document.getElementById('play-btn');
         const nowPlaying = document.getElementById('now-playing');
@@ -113,6 +121,19 @@
             };
         }
 
+        connectWs();
+
+        // Wake Lock — не даём экрану гаснуть
+        let wakeLock = null;
+        async function requestWakeLock() {
+            try {
+                wakeLock = await navigator.wakeLock.request('screen');
+                wakeLock.addEventListener('release', () => wakeLock = null);
+            } catch (_) {}
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') requestWakeLock();
+        });
         btn.onclick = () => {
             if (player.paused) {
                 player.src = streamUrl;
@@ -122,6 +143,7 @@
                     nowPlaying.textContent = 'STATION: ON AIR';
                     statusBar.textContent = 'connected';
                     statusBar.style.color = '#00ff41';
+                    requestWakeLock();
                 }).catch(() => {
                     statusBar.textContent = 'playback blocked';
                     statusBar.style.color = '#ff0041';
@@ -134,10 +156,11 @@
                 nowPlaying.textContent = 'STATION: IDLE';
                 statusBar.textContent = 'disconnected';
                 statusBar.style.color = '#003b00';
+                if (wakeLock) wakeLock.release();
             }
         };
 
-        connectWs();
+        requestWakeLock();
     </script>
 </body>
 </html>
