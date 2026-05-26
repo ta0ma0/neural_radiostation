@@ -84,6 +84,7 @@ class CyberRadio:
         self.master_stream = None
         self.fm_enabled = False
         self._playing = False
+        self._resetting = False
 
         safe_pass = quote(ICECAST_PASSWORD, safe="")
         self.icecast_url = f"icecast://source:{safe_pass}@132.243.22.20:8000/djalyx"
@@ -146,6 +147,8 @@ class CyberRadio:
 
     async def start_master_stream(self):
         """Запуск основного вещания (Icecast, опционально FM)"""
+        if self.master_stream is not None and self.master_stream.returncode is None:
+            return  # уже есть живой стрим
         tty_log("[*] [System]: Подъем Master-узла вещания...")
 
         cmd = [
@@ -210,11 +213,34 @@ class CyberRadio:
             await asyncio.sleep(3)
 
             if self.master_stream.returncode is None:
-                return
+                if await self._wait_for_mount(15):
+                    return
 
             tty_log(f"[❌] FFmpeg не стартовал (код {self.master_stream.returncode}). Ждём {delay}с...", "error")
+            if self.master_stream.returncode is None:
+                self.master_stream.terminate()
+                try:
+                    await asyncio.wait_for(self.master_stream.wait(), timeout=3)
+                except Exception:
+                    pass
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30)
+
+    async def _wait_for_mount(self, timeout=15):
+        for _ in range(timeout):
+            await asyncio.sleep(1)
+            try:
+                import urllib.request, json
+                resp = urllib.request.urlopen("http://127.0.0.1:8000/status-json.xsl", timeout=3)
+                data = json.loads(resp.read())
+                sources = data.get("icestats", {}).get("source", [])
+                if isinstance(sources, dict):
+                    sources = [sources]
+                if sources:
+                    return True
+            except Exception:
+                pass
+        return False
 
     async def play_single_file(self, track):
         if isinstance(track, str):
@@ -269,7 +295,7 @@ class CyberRadio:
 
     async def _stream_track(self, decoder):
         while True:
-            chunk = await asyncio.wait_for(decoder.stdout.read(16384), timeout=60)
+            chunk = await asyncio.wait_for(decoder.stdout.read(16384), timeout=30)
             if not chunk:
                 break
             self.master_stream.stdin.write(chunk)
@@ -443,6 +469,9 @@ class CyberRadio:
                     await self._reset_master()
 
     async def _reset_master(self):
+        if getattr(self, '_resetting', False):
+            return
+        self._resetting = True
         old = self.master_stream
         self.master_stream = None
         if old:
@@ -453,11 +482,12 @@ class CyberRadio:
                 old.kill()
                 await asyncio.wait_for(old.wait(), timeout=3)
         self._icecast_missed = 0
+        self._resetting = False
 
     async def _silence_filler(self):
         silence = b"\x00\x00" * 4096
         while self.is_running:
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
             if self._playing:
                 continue
             try:
@@ -468,6 +498,9 @@ class CyberRadio:
                 pass
 
     async def _radio_cycle(self, tracks_played, min_before_dj, music_base, jingle_base, temp_base):
+        if getattr(self, '_resetting', False):
+            return self.tp if hasattr(self, 'tp') else tracks_played
+
         if self.master_stream is None or self.master_stream.returncode is not None:
             tty_log("Master-стрим упал, рестарт...", "error")
             await self.start_master_stream()
