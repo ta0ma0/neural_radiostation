@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 
+BASE = Path(__file__).resolve().parent.parent.parent
+VERSION = (BASE / "VERSION").read_text().strip()
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.http import JsonResponse
@@ -20,11 +23,11 @@ except ImportError:
 
 @traced_function()
 def terminal_view(request):
-    return render(request, "terminal/terminal.html")
+    return render(request, "terminal/terminal.html", {"version": VERSION})
 
 @traced_function()
 def mobile_view(request):
-    return render(request, "terminal/mobile.html")
+    return render(request, "terminal/mobile.html", {"version": VERSION})
 
 
 @traced_function()
