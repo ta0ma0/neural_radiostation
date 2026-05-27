@@ -30,6 +30,9 @@ maxmind/
 # Список IP слушателей (личные данные)
 listeners.txt
 
+# Локальная карта слушателей
+tools/listener_map.html
+
 # F5-TTS submodule (large dependency)
 F5-TTS/
 

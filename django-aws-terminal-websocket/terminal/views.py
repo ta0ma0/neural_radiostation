@@ -29,22 +29,7 @@ def terminal_view(request):
 def mobile_view(request):
     return render(request, "terminal/mobile.html", {"version": VERSION})
 
-@traced_function()
-def listeners_view(request):
-    import csv
-    path = Path(__file__).resolve().parent.parent.parent / "maxmind" / "listener_coords.csv"
-    data = []
-    if path.exists():
-        with open(path) as f:
-            for row in csv.DictReader(f, delimiter=";"):
-                data.append([
-                    float(row["Latitude"]),
-                    float(row["Longitude"]),
-                    row["IP"],
-                    row["City"],
-                    row["Country"],
-                ])
-    return render(request, "terminal/listeners.html", {"listeners": json.dumps(data)})
+
 
 
 @traced_function()
