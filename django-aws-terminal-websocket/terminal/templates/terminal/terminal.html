@@ -258,6 +258,7 @@
                     const r = await fetch('/api/status/');
                     const s = await r.json();
                     el.className = s.streaming ? 'air-on' : 'air-off';
+                    document.getElementById('listeners-count').innerText = s.listeners;
                     if (s.streaming) {
                         if (wasOffline && !audio.paused && !userDisconnected) {
                             tryReconnect();
