@@ -102,13 +102,36 @@
             navigator.serviceWorker.register('/sw.js');
         }
 
-        const player = document.getElementById('player');
         const btn = document.getElementById('play-btn');
         const nowPlaying = document.getElementById('now-playing');
         const statusBar = document.getElementById('status');
         const listenersSpan = document.getElementById('listeners-count');
 
+        function getPlayer() { return document.getElementById('player'); }
         function streamUrl() { return '/stream/djalyx?_=' + Date.now(); }
+
+        function playStream() {
+            var old = getPlayer();
+            if (old) old.remove();
+            var el = document.createElement('audio');
+            el.id = 'player';
+            el.preload = 'none';
+            el.autoplay = false;
+            document.body.appendChild(el);
+            el.src = streamUrl();
+            el.play().then(function() {
+                btn.innerHTML = '&#9646;&#9646;';
+                btn.classList.add('playing');
+                nowPlaying.textContent = 'STATION: ON AIR';
+                statusBar.textContent = 'connected';
+                statusBar.style.color = '#00ff41';
+                requestWakeLock();
+            }).catch(function() {
+                statusBar.textContent = 'playback blocked';
+                statusBar.style.color = '#ff0041';
+            });
+            return el;
+        }
 
         let ws = null;
 
@@ -139,32 +162,6 @@
         const badge = document.getElementById('air-badge');
         let offAirSince = null;
         let userDisconnected = false;
-
-        function tryReconnect() {
-            if (userDisconnected) return;
-            player.src = streamUrl();
-            player.play().then(() => {
-                btn.innerHTML = '&#9646;&#9646;';
-                btn.classList.add('playing');
-                nowPlaying.textContent = 'STATION: ON AIR';
-                statusBar.textContent = 'connected';
-                statusBar.style.color = '#00ff41';
-                requestWakeLock();
-            }).catch(() => {});
-        }
-
-        player.addEventListener('error', () => {
-            if (!userDisconnected) {
-                nowPlaying.textContent = 'RECONNECTING...';
-                setTimeout(tryReconnect, 3000);
-            }
-        });
-
-        player.addEventListener('stalled', () => {
-            if (!userDisconnected) {
-                setTimeout(tryReconnect, 5000);
-            }
-        });
 
         let wasOffline = false;
         let offlineSince = null;
@@ -220,24 +217,13 @@
             if (document.visibilityState === 'visible') requestWakeLock();
         });
         btn.onclick = () => {
-            if (player.paused) {
+            var p = getPlayer();
+            if (!p || p.paused) {
                 userDisconnected = false;
-                player.src = streamUrl();
-                player.play().then(() => {
-                    btn.innerHTML = '&#9646;&#9646;';
-                    btn.classList.add('playing');
-                    nowPlaying.textContent = 'STATION: ON AIR';
-                    statusBar.textContent = 'connected';
-                    statusBar.style.color = '#00ff41';
-                    requestWakeLock();
-                }).catch(() => {
-                    statusBar.textContent = 'playback blocked';
-                    statusBar.style.color = '#ff0041';
-                });
+                playStream();
             } else {
                 userDisconnected = true;
-                player.pause();
-                player.src = '';
+                if (p) { p.pause(); p.removeAttribute('src'); p.load(); }
                 btn.innerHTML = '&#9654;';
                 btn.classList.remove('playing');
                 nowPlaying.textContent = 'STATION: IDLE';

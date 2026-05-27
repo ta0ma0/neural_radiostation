@@ -201,53 +201,51 @@
             term.onData((data) => socket.send(new TextEncoder().encode(data)));
 
             // 3. Audio Player логика
-            const audio = document.getElementById("audio-player");
             const playBtn = document.getElementById("play-pause");
             const nowPlayingElement = document.getElementById("now-playing");
 
             let reconnectTimer = null;
             let userDisconnected = false;
 
+            function getAudio() { return document.getElementById('audio-player'); }
+
             function streamUrl() { return '/stream/djalyx?_=' + Date.now(); }
 
+            function playStream() {
+                var old = getAudio();
+                if (old) old.remove();
+                var el = document.createElement('audio');
+                el.id = 'audio-player';
+                el.preload = 'none';
+                el.autoplay = false;
+                document.body.appendChild(el);
+                el.src = streamUrl();
+                el.play().catch(function(){});
+                return el;
+            }
+
+            function scheduleReconnect(ms) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(function() {
+                    if (!userDisconnected) { playStream(); }
+                }, ms);
+            }
+
             playBtn.onclick = () => {
-                if (audio.paused) {
+                var a = getAudio();
+                if (!a || a.paused) {
                     userDisconnected = false;
-                    audio.src = streamUrl();
-                    audio.play().catch(() => {});
+                    playStream();
                     playBtn.innerText = "[ DISCONNECT ]";
                     nowPlayingElement.innerText = "STATION: ON AIR";
                 } else {
                     userDisconnected = true;
-                    audio.pause();
-                    audio.src = audio.src;
+                    var a = getAudio();
+                    if (a) { a.pause(); a.removeAttribute('src'); a.load(); }
                     playBtn.innerText = "[ CONNECT TO STREAM ]";
                     nowPlayingElement.innerText = "STATION: IDLE";
                 }
             };
-
-            function tryReconnect() {
-                if (userDisconnected) return;
-                audio.src = streamUrl();
-                audio.play().catch(() => {});
-                playBtn.innerText = "[ DISCONNECT ]";
-                nowPlayingElement.innerText = "STATION: ON AIR";
-            }
-
-            audio.addEventListener('error', () => {
-                if (!userDisconnected) {
-                    nowPlayingElement.innerText = "STATION: RECONNECTING...";
-                    clearTimeout(reconnectTimer);
-                    reconnectTimer = setTimeout(tryReconnect, 3000);
-                }
-            });
-
-            audio.addEventListener('stalled', () => {
-                if (!userDisconnected) {
-                    clearTimeout(reconnectTimer);
-                    reconnectTimer = setTimeout(tryReconnect, 5000);
-                }
-            });
 
             // 4. Статус вещания + авто-восстановление
             let wasOffline = false;
@@ -262,8 +260,8 @@
                     el.className = s.streaming ? 'air-on' : 'air-off';
                     document.getElementById('listeners-count').innerText = s.listeners;
                     if (s.streaming) {
-                        if (wasOffline && !audio.paused && !userDisconnected) {
-                            tryReconnect();
+                        if (wasOffline && getAudio() && !getAudio().paused && !userDisconnected) {
+                            playStream();
                         }
                         offlineSince = null;
                         if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
