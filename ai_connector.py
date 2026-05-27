@@ -100,10 +100,10 @@ def generate_dj_speech(artist_info: str, track_name: str, artist_name: str) -> s
     # 1. Проверка через requests (синхронно, так как это удобно внутри потока)
     # Используем HEAD запрос - он быстрее и не грузит сервер данными о моделях
     try:
-        response = requests.get("http://127.0.0.1:1234/v1/models", timeout=2)
+        response = requests.get("http://127.0.0.1:1234/v1/models", timeout=10)
         if response.status_code != 200:
             tty_log("[!] LM Studio не ответила 200. Переходим на заглушки.")
-            return None  # Вернем None, чтобы caller использовал Fallback
+            return None
     except Exception as e:
         tty_log(f"[!] Ошибка подключения к LM Studio: {e}")
         return None
