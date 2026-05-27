@@ -167,6 +167,9 @@
         });
 
         let wasOffline = false;
+        let offlineSince = null;
+        let refreshTimer = null;
+
         async function checkStatus() {
             try {
                 const r = await fetch('/api/status/');
@@ -176,6 +179,8 @@
                     badge.textContent = 'ON AIR';
                     offAirSince = null;
                     listenersSpan.textContent = s.listeners;
+                    offlineSince = null;
+                    if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
                     if (wasOffline && !player.paused && !userDisconnected) {
                         tryReconnect();
                     }
@@ -183,6 +188,15 @@
                     badge.className = 'air-off';
                     badge.textContent = 'OFF AIR';
                     if (!offAirSince) offAirSince = Date.now();
+                    if (!userDisconnected && !offlineSince) {
+                        offlineSince = Date.now();
+                    }
+                    if (!userDisconnected && offlineSince && Date.now() - offlineSince > 120000) {
+                        nowPlaying.textContent = 'OFFLINE — RELOAD...';
+                        if (!refreshTimer) {
+                            refreshTimer = setTimeout(() => location.reload(), 5000);
+                        }
+                    }
                 }
                 wasOffline = !s.streaming;
             } catch (_) {

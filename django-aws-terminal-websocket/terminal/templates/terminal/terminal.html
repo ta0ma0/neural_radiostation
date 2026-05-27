@@ -248,14 +248,31 @@
 
             // 4. Статус вещания + авто-восстановление
             let wasOffline = false;
+            let offlineSince = null;
+            let refreshTimer = null;
+
             async function checkStatus() {
                 const el = document.getElementById('now-playing');
                 try {
                     const r = await fetch('/api/status/');
                     const s = await r.json();
                     el.className = s.streaming ? 'air-on' : 'air-off';
-                    if (s.streaming && wasOffline && !audio.paused && !userDisconnected) {
-                        tryReconnect();
+                    if (s.streaming) {
+                        if (wasOffline && !audio.paused && !userDisconnected) {
+                            tryReconnect();
+                        }
+                        offlineSince = null;
+                        if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+                    } else {
+                        if (!userDisconnected && !offlineSince) {
+                            offlineSince = Date.now();
+                        }
+                        if (!userDisconnected && offlineSince && Date.now() - offlineSince > 120000) {
+                            nowPlayingElement.innerText = "STATION: OFFLINE — RELOADING...";
+                            if (!refreshTimer) {
+                                refreshTimer = setTimeout(() => location.reload(), 5000);
+                            }
+                        }
                     }
                     wasOffline = !s.streaming;
                 } catch (_) {
