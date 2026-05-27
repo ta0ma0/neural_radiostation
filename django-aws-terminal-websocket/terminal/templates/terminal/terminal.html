@@ -211,6 +211,7 @@
             playBtn.onclick = () => {
                 if (audio.paused) {
                     userDisconnected = false;
+                    audio.src = '/stream/djalyx';
                     audio.play().catch(() => {});
                     playBtn.innerText = "[ DISCONNECT ]";
                     nowPlayingElement.innerText = "STATION: ON AIR";
