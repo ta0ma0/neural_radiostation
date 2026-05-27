@@ -1,0 +1,21 @@
+<ezstream>
+    <servers>
+        <server>
+            <hostname>132.243.22.20</hostname>
+            <port>8000</port>
+            <password>OUxj5oYrJw5tcjVjCzF7Lw</password>
+            <reconnect_attempts>999999</reconnect_attempts>
+        </server>
+    </servers>
+    <streams>
+        <stream>
+            <mountpoint>/djalyx</mountpoint>
+            <format>MP3</format>
+        </stream>
+    </streams>
+    <intakes>
+        <intake>
+            <type>stdin</type>
+        </intake>
+    </intakes>
+</ezstream>

@@ -84,37 +84,9 @@ class CyberRadio:
         self.master_stream = None
         self.fm_enabled = False
         self._playing = False
-        self._resetting = False
 
         safe_pass = quote(ICECAST_PASSWORD, safe="")
         self.icecast_url = f"icecast://source:{safe_pass}@132.243.22.20:8000/djalyx"
-
-    async def monitor_ffmpeg_stderr(self):
-        """Ловит ошибки FFmpeg в реальном времени"""
-        if not self.master_stream or not self.master_stream.stderr:
-            return
-        while True:
-            try:
-                line = await self.master_stream.stderr.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="ignore").strip()
-                if any(
-                    phrase in text.lower()
-                    for phrase in [
-                        "http error",
-                        "error opening",
-                        "403 forbidden",
-                        "404 not found",
-                        "connection refused",
-                        "failed to connect",
-                        "authentication failed",
-                        "access denied",
-                    ]
-                ):
-                    tty_log(f"[FFMPEG DIAGNOSTIC] {text}", "error")
-            except:
-                break
 
     async def get_random_atmospherics(self):
         path = os.path.join(PROJECT_DIR, "Мелодии и ритмы ЭВМ")
@@ -146,101 +118,54 @@ class CyberRadio:
         return None
 
     async def start_master_stream(self):
-        """Запуск основного вещания (Icecast, опционально FM)"""
+        """Запуск вещания (ffmpeg→ezstream pipeline, опционально FM)"""
         if self.master_stream is not None and self.master_stream.returncode is None:
-            return  # уже есть живой стрим
+            return
         tty_log("[*] [System]: Подъем Master-узла вещания...")
 
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-re",
-            "-f",
-            "s16le",
-            "-ar",
-            "44100",
-            "-ac",
-            "2",
-            "-i",
-            "pipe:0",
-        ]
-
         if self.fm_enabled:
-            cmd += [
-                "-filter_complex",
-                "[0:a]asplit=2[ice][fm]",
-                "-map",
-                "[ice]",
+            cmd = [
+                "ffmpeg", "-y", "-re", "-f", "s16le", "-ar", "44100", "-ac", "2",
+                "-i", "pipe:0",
+                "-filter_complex", "[0:a]asplit=2[ice][fm]",
+                "-map", "[ice]", "-c:a", "libmp3lame", "-b:a", "64k",
+                "-f", "mp3", self.icecast_url,
+                "-map", "[fm]", "-f", "s16le", "-ar", "48000", "-ac", "1",
+                "-flush_packets", "1", "/tmp/grc_pipe",
             ]
-        else:
-            cmd += ["-map", "0:a"]
-
-        cmd += [
-            "-c:a",
-            "libmp3lame",
-            "-b:a",
-            "128k",
-            "-f",
-            "mp3",
-            self.icecast_url,
-        ]
-
-        if self.fm_enabled:
-            cmd += [
-                "-map",
-                "[fm]",
-                "-f",
-                "s16le",
-                "-ar",
-                "48000",
-                "-ac",
-                "1",
-                "-flush_packets",
-                "1",
-                "/tmp/grc_pipe",
-            ]
-
-        delay = 2
-        while True:
             self.master_stream = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
+        else:
+            ez_config = os.path.join(PROJECT_DIR, "tools", "ezstream.xml")
+            # pipeline: ffmpeg кодирует PCM→MP3, ezstream пушит в Icecast с авто-reconnect
+            cmd = f"ffmpeg -y -re -f s16le -ar 44100 -ac 2 -i pipe:0 -f mp3 -b:a 64k - | ezstream -c {ez_config}"
+            self.master_stream = await asyncio.create_subprocess_shell(
+                cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
 
-            asyncio.create_task(self.monitor_ffmpeg_stderr())
-            await asyncio.sleep(3)
+        asyncio.create_task(self._monitor_master_stderr())
+        await asyncio.sleep(2)
 
-            if self.master_stream.returncode is None:
-                if await self._wait_for_mount(15):
-                    return
-
-            tty_log(f"[❌] FFmpeg не стартовал (код {self.master_stream.returncode}). Ждём {delay}с...", "error")
-            if self.master_stream.returncode is None:
-                self.master_stream.terminate()
-                try:
-                    await asyncio.wait_for(self.master_stream.wait(), timeout=3)
-                except Exception:
-                    pass
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 30)
-
-    async def _wait_for_mount(self, timeout=15):
-        for _ in range(timeout):
-            await asyncio.sleep(1)
+    async def _monitor_master_stderr(self):
+        if not self.master_stream or not self.master_stream.stderr:
+            return
+        while True:
             try:
-                import urllib.request, json
-                resp = urllib.request.urlopen("http://132.243.22.20:8000/status-json.xsl", timeout=3)
-                data = json.loads(resp.read())
-                sources = data.get("icestats", {}).get("source", [])
-                if isinstance(sources, dict):
-                    sources = [sources]
-                if sources:
-                    return True
+                line = await self.master_stream.stderr.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="ignore").strip()
+                if any(p in text.lower() for p in ["error", "failed", "auth", "refused"]):
+                    tty_log(f"[EZSTREAM] {text}", "error")
             except Exception:
-                pass
-        return False
+                break
 
     async def play_single_file(self, track):
         if isinstance(track, str):
@@ -423,10 +348,6 @@ class CyberRadio:
 
         await self.start_master_stream()
 
-        self._icecast_missed = 0
-        asyncio.create_task(self._icemount_logger())
-        asyncio.create_task(self._silence_filler())
-
         tracks_played = 0
         min_before_dj = 3
 
@@ -438,63 +359,18 @@ class CyberRadio:
                 )
                 tracks_played = self.tp
             except asyncio.TimeoutError:
-                tty_log("[WATCHDOG] Цикл радио завис", "error")
-                await self._reset_master()
+                tty_log("[WATCHDOG] Цикл радио завис — перезапуск", "error")
+                if self.master_stream:
+                    self.master_stream.terminate()
+                    try:
+                        await asyncio.wait_for(self.master_stream.wait(), timeout=3)
+                    except Exception:
+                        pass
+                    self.master_stream = None
+                await self.start_master_stream()
             except Exception as e:
                 tty_log(f"[WATCHDOG] Ошибка цикла: {repr(e)}", "error")
                 await asyncio.sleep(3)
-
-    async def _icemount_logger(self):
-        while self.is_running:
-            await asyncio.sleep(15)
-            ok = False
-            try:
-                import urllib.request, json
-                resp = urllib.request.urlopen("http://132.243.22.20:8000/status-json.xsl", timeout=5)
-                data = json.loads(resp.read())
-                sources = data.get("icestats", {}).get("source", [])
-                if isinstance(sources, dict):
-                    sources = [sources]
-                if sources:
-                    self._icecast_missed = 0
-                    ok = True
-            except Exception:
-                pass
-            if not ok:
-                self._icecast_missed += 1
-                if self._icecast_missed == 1:
-                    tty_log("[ICECAST] Mount пропал — жду следующей проверки", "error")
-                elif self._icecast_missed >= 4:
-                    tty_log("[ICECAST] Mount нет 60с — перезапуск", "error")
-                    await self._reset_master()
-
-    async def _reset_master(self):
-        if getattr(self, '_resetting', False):
-            return
-        self._resetting = True
-        old = self.master_stream
-        self.master_stream = None
-        if old:
-            old.kill()
-            try:
-                await asyncio.wait_for(old.wait(), timeout=2)
-            except Exception:
-                pass
-        self._icecast_missed = 0
-        self._resetting = False
-
-    async def _silence_filler(self):
-        silence = b"\x00\x00" * 4096
-        while self.is_running:
-            await asyncio.sleep(3)
-            if self._playing:
-                continue
-            try:
-                if self.master_stream and self.master_stream.returncode is None:
-                    self.master_stream.stdin.write(silence)
-                    await asyncio.wait_for(self.master_stream.stdin.drain(), timeout=2)
-            except Exception:
-                pass
 
     async def _radio_cycle(self, tracks_played, min_before_dj, music_base, jingle_base, temp_base):
         if self.master_stream is None or self.master_stream.returncode is not None:
