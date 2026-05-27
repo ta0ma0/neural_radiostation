@@ -108,7 +108,7 @@
         const statusBar = document.getElementById('status');
         const listenersSpan = document.getElementById('listeners-count');
 
-        const streamUrl = '/stream/djalyx';
+        function streamUrl() { return '/stream/djalyx?_=' + Date.now(); }
 
         let ws = null;
 
@@ -142,7 +142,7 @@
 
         function tryReconnect() {
             if (userDisconnected) return;
-            player.src = streamUrl;
+            player.src = streamUrl();
             player.play().then(() => {
                 btn.innerHTML = '&#9646;&#9646;';
                 btn.classList.add('playing');
@@ -222,7 +222,7 @@
         btn.onclick = () => {
             if (player.paused) {
                 userDisconnected = false;
-                player.src = streamUrl;
+                player.src = streamUrl();
                 player.play().then(() => {
                     btn.innerHTML = '&#9646;&#9646;';
                     btn.classList.add('playing');

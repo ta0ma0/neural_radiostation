@@ -208,10 +208,12 @@
             let reconnectTimer = null;
             let userDisconnected = false;
 
+            function streamUrl() { return '/stream/djalyx?_=' + Date.now(); }
+
             playBtn.onclick = () => {
                 if (audio.paused) {
                     userDisconnected = false;
-                    audio.src = '/stream/djalyx';
+                    audio.src = streamUrl();
                     audio.play().catch(() => {});
                     playBtn.innerText = "[ DISCONNECT ]";
                     nowPlayingElement.innerText = "STATION: ON AIR";
@@ -226,7 +228,7 @@
 
             function tryReconnect() {
                 if (userDisconnected) return;
-                audio.src = '/stream/djalyx';
+                audio.src = streamUrl();
                 audio.play().catch(() => {});
                 playBtn.innerText = "[ DISCONNECT ]";
                 nowPlayingElement.innerText = "STATION: ON AIR";
