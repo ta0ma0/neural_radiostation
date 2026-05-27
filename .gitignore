@@ -24,6 +24,12 @@ archives/
 # Cache
 .cache_images/
 
+# MaxMind GeoIP (база данных + инструменты — личное)
+maxmind/
+
+# Список IP слушателей (личные данные)
+listeners.txt
+
 # F5-TTS submodule (large dependency)
 F5-TTS/
 
@@ -45,3 +51,6 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+maxmind
+listeners.txt
