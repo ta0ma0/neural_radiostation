@@ -140,8 +140,16 @@ class CyberRadio:
                 stderr=asyncio.subprocess.PIPE,
             )
         else:
+            ez_template = os.path.join(PROJECT_DIR, "tools", "ezstream.xml.template")
             ez_config = os.path.join(PROJECT_DIR, "tools", "ezstream.xml")
-            # pipeline: ffmpeg кодирует PCM→MP3, ezstream пушит в Icecast с авто-reconnect
+            with open(ez_template, "r") as f:
+                xml = f.read()
+            xml = xml.replace("__HOSTNAME__", "132.243.22.20")
+            xml = xml.replace("__PORT__", "8000")
+            xml = xml.replace("__PASSWORD__", ICECAST_PASSWORD)
+            with open(ez_config, "w") as f:
+                f.write(xml)
+            os.chmod(ez_config, 0o600)
             cmd = f"ffmpeg -y -f s16le -ar 44100 -ac 2 -i pipe:0 -f mp3 -b:a 64k - | ezstream -c {ez_config}"
             self.master_stream = await asyncio.create_subprocess_shell(
                 cmd,

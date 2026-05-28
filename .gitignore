@@ -33,6 +33,9 @@ listeners.txt
 # Локальная карта слушателей
 tools/listener_map.html
 
+# Сгенерированный ezstream.xml (пароль)
+tools/ezstream.xml
+
 # F5-TTS submodule (large dependency)
 F5-TTS/
 
