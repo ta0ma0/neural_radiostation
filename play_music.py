@@ -474,13 +474,15 @@ class CyberRadio:
                 data = self.speech_buffer
                 self.speech_buffer = None
                 tracks_played = 0
+                self._dj_cycle += 1
 
-                if self.news_buffer:
+                if self._dj_cycle % 2 == 0 and self.news_buffer:
                     for sf in self.news_buffer["speech_files"]:
                         self.playlist.append(
                             {"path": sf["path"], "artist": "DJ Alyx", "title": "News"}
                         )
                     self.news_buffer = None
+                    asyncio.create_task(self._news_speech_generator())
 
                 for sf in data["speech_files"]:
                     self.playlist.append(
