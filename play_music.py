@@ -43,7 +43,9 @@ os.makedirs(ARCHIVE_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 MUSIC_DIR = os.getenv("MUSIC_DIR")
-DB_PATH = os.getenv("DATA_BASE")
+DB_PATH = os.getenv("DATA_BASE", "")
+if DB_PATH and not os.path.isabs(DB_PATH):
+    DB_PATH = os.path.join(PROJECT_DIR, DB_PATH)
 ICECAST_PASSWORD = os.getenv("ICECAST_SOURCE_PASSWORD", "change_me_in_env")
 
 
