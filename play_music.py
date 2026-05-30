@@ -368,13 +368,12 @@ class CyberRadio:
                 """, (today_start,))
                 rows = c.fetchall()
                 if not rows:
+                    c.execute("UPDATE description SET read = 0, read_date = NULL WHERE added_date >= ?", (today_start,))
+                    conn.commit()
                     conn.close()
-                    await asyncio.sleep(300)
+                    await asyncio.sleep(60)
                     continue
                 ids = [r[0] for r in rows]
-                c.execute("UPDATE description SET read = 1, read_date = CURRENT_TIMESTAMP WHERE id IN ({})".format(",".join("?" * len(ids))), ids)
-                conn.commit()
-                conn.close()
 
                 now = datetime.datetime.now(datetime.timezone.utc)
                 intro = f"Сегодня {self._time_to_words(now)}. "
@@ -405,6 +404,11 @@ class CyberRadio:
                     if await loop.run_in_executor(None, alyx.generate, chunk, p):
                         speech_files.append({"path": p})
                 if speech_files:
+                    conn = sqlite3.connect(db_path)
+                    c2 = conn.cursor()
+                    c2.execute("UPDATE description SET read = 1, read_date = CURRENT_TIMESTAMP WHERE id IN ({})".format(",".join("?" * len(ids))), ids)
+                    conn.commit()
+                    conn.close()
                     self.news_buffer = {"speech_files": speech_files}
                     tty_log(f"Подготовлены новости ({len(rows)} шт)", "ai")
             except Exception as e:
