@@ -4,6 +4,7 @@
 Использует локальную LLM (LM Studio).
 """
 
+import datetime
 import json
 import os
 import sys
@@ -12,7 +13,7 @@ from pathlib import Path
 import aiohttp
 import requests
 
-from journal_prompt_generic import PROMPT_DJ2 as PROMPT, PROMPT_DJ_NO_INFO_RU as PROMPT_NI
+from journal_prompt_generic import PROMPT_DJ2 as PROMPT, PROMPT_DJ_NO_INFO_RU as PROMPT_NI, PROMPT_NEWS
 from last_fm import get_artist_info
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -41,7 +42,7 @@ def tty_log(message, style="info"):
         "on_air": "\033[36m[ON AIR]\033[0m",
         "ai": "\033[35m[⚙️ AI]\033[0m",
         "error": "\033[31m[ERROR]\033[0m",
-        "time": f"\033[90m{datetime.now().strftime('%H:%M:%S')}\033[0m",
+        "time": f"\033[90m{datetime.datetime.now().strftime('%H:%M:%S')}\033[0m",
     }
     prefix = colors.get(style, colors["info"])
 
@@ -96,9 +97,7 @@ def get_llm_response_local(messages: list) -> dict:
         return {"content": f"Неизвестная ошибка: {e}"}
 
 
-def generate_dj_speech(artist_info: str, track_name: str, artist_name: str) -> str:
-    # 1. Проверка через requests (синхронно, так как это удобно внутри потока)
-    # Используем HEAD запрос - он быстрее и не грузит сервер данными о моделях
+def generate_dj_speech(artist_info: str, track_name: str = "", artist_name: str = "", prompt_type: str = "track") -> str:
     try:
         response = requests.get("http://127.0.0.1:1234/v1/models", timeout=10)
         if response.status_code != 200:
@@ -108,20 +107,23 @@ def generate_dj_speech(artist_info: str, track_name: str, artist_name: str) -> s
         tty_log(f"[!] Ошибка подключения к LM Studio: {e}")
         return None
 
-    # 2. Формирование промпта
-    bad_bio = not artist_info or len(artist_info) < 20 or artist_info.startswith("Artist:")
-    if bad_bio:
-        system_message = PROMPT_NI.format(track_name=track_name, artist_name=artist_name)
-        user_content = "Информации нет. Придумай что-то абсурдное."
-    else:
-        system_message = PROMPT_DJ.format(track_name=track_name, artist_name=artist_name)
+    if prompt_type == "news":
+        system_message = PROMPT_NEWS.format(news_text=artist_info)
         user_content = artist_info
+    else:
+        short = not artist_info or len(artist_info) < 20 or artist_info.startswith("Artist:")
+        if short:
+            system_message = PROMPT_NI.format(track_name=track_name, artist_name=artist_name)
+            user_content = "Информации нет. Придумай что-то абсурдное."
+        else:
+            system_message = PROMPT_DJ.format(track_name=track_name, artist_name=artist_name)
+            user_content = artist_info
+
     messages = [
         {"role": "system", "content": system_message},
         {"role": "user", "content": user_content},
     ]
 
-    # 3. Вызов генерации
     response_data = get_llm_response_local(messages)
 
     # 4. Безопасный парсинг

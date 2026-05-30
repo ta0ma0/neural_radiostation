@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from datetime import datetime
+import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -17,6 +17,8 @@ signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
 import requests as http_requests
 from dotenv import load_dotenv
+
+from num2words import num2words
 
 # Сторонние модули
 from ai_connector import generate_dj_speech
@@ -50,7 +52,7 @@ def tty_log(message, style="info"):
         "on_air": "\033[36m[ON AIR]\033[0m",
         "ai": "\033[35m[⚙️ AI]\033[0m",
         "error": "\033[31m[ERROR]\033[0m",
-        "time": f"\033[90m{datetime.now().strftime('%H:%M:%S')}\033[0m",
+        "time": f"\033[90m{datetime.datetime.now().strftime('%H:%M:%S')}\033[0m",
     }
     prefix = colors.get(style, colors["info"])
     full_message = f"{colors['time']} {prefix} {message}"
@@ -80,6 +82,7 @@ class CyberRadio:
         self.is_running = True
         self.playlist = []
         self.speech_buffer = None
+        self.news_buffer = None
         self.is_generating = False
         self.master_stream = None
         self.fm_enabled = False
@@ -338,6 +341,75 @@ class CyberRadio:
         finally:
             self.is_generating = False
 
+    def _time_to_words(self, dt):
+        weekdays = ["понедельник","вторник","среда","четверг","пятница","суббота","воскресенье"]
+        months = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"]
+        d = num2words(dt.day, lang='ru')
+        m = months[dt.month - 1]
+        h = num2words(dt.hour, lang='ru')
+        mi = num2words(dt.minute, lang='ru')
+        return f"{weekdays[dt.weekday()]}, {d} {m}, {h} часов {mi} минут по UTC"
+
+    async def _news_speech_generator(self):
+        db_path = os.path.join(PROJECT_DIR, "tools", "xakep_ru.db")
+        while self.is_running:
+            await asyncio.sleep(1)
+            if self.news_buffer is not None:
+                continue
+            try:
+                conn = sqlite3.connect(db_path)
+                c = conn.cursor()
+                today_start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+                c.execute("""
+                    SELECT id, text FROM description
+                    WHERE added_date >= ? AND (read IS NULL OR read = 0)
+                    ORDER BY id DESC LIMIT 3
+                """, (today_start,))
+                rows = c.fetchall()
+                if not rows:
+                    conn.close()
+                    await asyncio.sleep(300)
+                    continue
+                ids = [r[0] for r in rows]
+                c.execute("UPDATE description SET read = 1, read_date = CURRENT_TIMESTAMP WHERE id IN ({})".format(",".join("?" * len(ids))), ids)
+                conn.commit()
+                conn.close()
+
+                now = datetime.datetime.now(datetime.timezone.utc)
+                intro = f"Сегодня {self._time_to_words(now)}. "
+                news_texts = []
+                for r in rows:
+                    clean = re.sub(r'<[^>]+>', '', r[1]).strip()
+                    if len(clean) > 500:
+                        clean = clean[:500] + "..."
+                    news_texts.append(clean)
+                full_text = intro + " ".join(news_texts)
+
+                loop = asyncio.get_event_loop()
+                raw = await loop.run_in_executor(None, generate_dj_speech, full_text, "", "", "news")
+                speech_text = raw
+                if isinstance(raw, str) and raw.startswith("{"):
+                    try:
+                        speech_text = json.loads(raw).get("content", raw)
+                    except Exception:
+                        pass
+                if not speech_text:
+                    speech_text = f"Новости. {full_text} А теперь продолжим музыку."
+
+                chunks = self.split_text_to_chunks(speech_text, max_chunk_size=250)
+                speech_files = []
+                gen_id = random.randint(1000, 9999)
+                for i, chunk in enumerate(chunks):
+                    p = os.path.join(TEMP_DIR, f"news_{gen_id}_{i}.mp3")
+                    if await loop.run_in_executor(None, alyx.generate, chunk, p):
+                        speech_files.append({"path": p})
+                if speech_files:
+                    self.news_buffer = {"speech_files": speech_files}
+                    tty_log(f"Подготовлены новости ({len(rows)} шт)", "ai")
+            except Exception as e:
+                tty_log(f"[⚙️ AI] Ошибка генерации новостей: {repr(e)}", "error")
+                await asyncio.sleep(60)
+
     async def run_radio(self):
         # 1. Очистка старья (пути приводим к абсолютному виду сразу)
         temp_base = os.path.abspath(TEMP_DIR)
@@ -356,8 +428,10 @@ class CyberRadio:
 
         await self.start_master_stream()
 
+        asyncio.create_task(self._news_speech_generator())
+
         tracks_played = 0
-        min_before_dj = 3
+        min_before_dj = 5
 
         while self.is_running:
             try:
@@ -401,12 +475,12 @@ class CyberRadio:
                 self.speech_buffer = None
                 tracks_played = 0
 
-                jingles = [f for f in os.listdir(jingle_base) if f.endswith(".mp3")]
-                if jingles:
-                    self.playlist.append({
-                        "path": os.path.join(jingle_base, random.choice(jingles)),
-                        "artist": "System", "title": "Jingle",
-                    })
+                if self.news_buffer:
+                    for sf in self.news_buffer["speech_files"]:
+                        self.playlist.append(
+                            {"path": sf["path"], "artist": "DJ Alyx", "title": "News"}
+                        )
+                    self.news_buffer = None
 
                 for sf in data["speech_files"]:
                     self.playlist.append(
