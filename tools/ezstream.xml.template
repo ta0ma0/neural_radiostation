@@ -3,6 +3,8 @@
         <server>
             <hostname>__HOSTNAME__</hostname>
             <port>__PORT__</port>
+            <protocol>HTTP</protocol>
+            <user>source</user>
             <password>__PASSWORD__</password>
         </server>
     </servers>
