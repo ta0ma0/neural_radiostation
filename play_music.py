@@ -87,6 +87,7 @@ class CyberRadio:
         self.master_stream = None
         self.fm_enabled = False
         self._playing = False
+        self._dj_cycle = 0
 
         safe_pass = quote(ICECAST_PASSWORD, safe="")
         self.icecast_url = f"icecast://source:{safe_pass}@132.243.22.20:8000/djalyx"
