@@ -106,17 +106,34 @@ class CyberRadio:
         ]
         return random.choice(files) if files else None
 
+    def _bpm_range(self):
+        h = datetime.datetime.now().hour
+        if 6 <= h < 12:   return (100, 130)
+        if 12 <= h < 18:  return (80, 110)
+        if 18 <= h < 23:  return (70, 100)
+        return (60, 90)
+
     def get_random_track(self):
         try:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
+            bpm_min, bpm_max = self._bpm_range()
             cursor.execute("""
                 SELECT tracks.title, artists.name, tracks.path, artists.summary
                 FROM tracks
                 LEFT JOIN artists ON tracks.artist_id = artists.id
+                WHERE tracks.bpm BETWEEN ? AND ?
                 ORDER BY RANDOM() LIMIT 1
-            """)
+            """, (bpm_min, bpm_max))
             t = cursor.fetchone()
+            if not t:
+                cursor.execute("""
+                    SELECT tracks.title, artists.name, tracks.path, artists.summary
+                    FROM tracks
+                    LEFT JOIN artists ON tracks.artist_id = artists.id
+                    ORDER BY RANDOM() LIMIT 1
+                """)
+                t = cursor.fetchone()
             conn.close()
             if t:
                 return {"title": t[0], "artist": t[1], "path": t[2], "cached_bio": t[3]}
