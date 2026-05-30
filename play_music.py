@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import traceback
 import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -538,3 +539,9 @@ if __name__ == "__main__":
         if radio.master_stream:
             radio.master_stream.terminate()
         tty_log("Сигнал потерян.")
+    except Exception:
+        err = traceback.format_exc()
+        tty_log(f"КРИТИЧЕСКАЯ ОШИБКА: {err}", "error")
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"\n=== CRASH: {datetime.datetime.now()} ===\n{err}\n")
+        print(err, flush=True)
