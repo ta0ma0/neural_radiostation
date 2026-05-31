@@ -7,13 +7,18 @@
 import datetime
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 import aiohttp
 import requests
 
-from journal_prompt_generic import PROMPT_DJ2 as PROMPT, PROMPT_DJ_NO_INFO_RU as PROMPT_NI, PROMPT_NEWS
+from journal_prompt_generic import (
+    PROMPT_DJ2, PROMPT_DJ_NO_INFO_RU, PROMPT_NEWS,
+    PROMPT_DJ_MORNING, PROMPT_DJ_DAY, PROMPT_DJ_EVENING, PROMPT_DJ_NIGHT,
+)
+from num2words import num2words
 from last_fm import get_artist_info
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -33,7 +38,7 @@ LOCAL_API_URL = "http://127.0.0.1:1234/v1/chat/completions"
 YOUR_SITE_URL = "http://localhost"
 YOUR_APP_NAME = "DJ-Agent"
 
-PROMPT_DJ = PROMPT
+PROMPT_DJ = PROMPT_DJ2
 
 
 def tty_log(message, style="info"):
@@ -97,6 +102,24 @@ def get_llm_response_local(messages: list) -> dict:
         return {"content": f"Неизвестная ошибка: {e}"}
 
 
+def _prompt_for_time(track_name, artist_name):
+    h = datetime.datetime.now().hour
+    if 6 <= h < 12:
+        return PROMPT_DJ_MORNING.format(track_name=track_name, artist_name=artist_name)
+    if 12 <= h < 18:
+        return PROMPT_DJ_DAY.format(track_name=track_name, artist_name=artist_name)
+    if 18 <= h < 23:
+        return PROMPT_DJ_EVENING.format(track_name=track_name, artist_name=artist_name)
+    return PROMPT_DJ_NIGHT.format(track_name=track_name, artist_name=artist_name)
+
+
+_RE_DIGIT = re.compile(r"\d+")
+
+
+def _digits_to_words(text):
+    return _RE_DIGIT.sub(lambda m: num2words(int(m.group()), lang='ru'), text)
+
+
 def generate_dj_speech(artist_info: str, track_name: str = "", artist_name: str = "", prompt_type: str = "track") -> str:
     try:
         response = requests.get("http://127.0.0.1:1234/v1/models", timeout=10)
@@ -113,10 +136,10 @@ def generate_dj_speech(artist_info: str, track_name: str = "", artist_name: str 
     else:
         short = not artist_info or len(artist_info) < 20 or artist_info.startswith("Artist:")
         if short:
-            system_message = PROMPT_NI.format(track_name=track_name, artist_name=artist_name)
+            system_message = PROMPT_DJ_NO_INFO_RU.format(track_name=track_name, artist_name=artist_name)
             user_content = "Информации нет. Придумай что-то абсурдное."
         else:
-            system_message = PROMPT_DJ.format(track_name=track_name, artist_name=artist_name)
+            system_message = _prompt_for_time(track_name, artist_name)
             user_content = artist_info
 
     messages = [
@@ -126,12 +149,11 @@ def generate_dj_speech(artist_info: str, track_name: str = "", artist_name: str 
 
     response_data = get_llm_response_local(messages)
 
-    # 4. Безопасный парсинг
     content = response_data.get("content", "")
     if "Сетевая ошибка" in content or "Ошибка" in content:
         return None
 
-    return content
+    return _digits_to_words(content)
 
 
 def main(summary):
