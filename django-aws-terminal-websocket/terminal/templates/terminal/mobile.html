@@ -81,6 +81,35 @@
             font-size: 0.7em;
             margin-top: 8px;
         }
+        .volume-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 120px;
+            height: 4px;
+            background: #003b00;
+            border-radius: 2px;
+            outline: none;
+            cursor: pointer;
+            margin: 12px 0;
+        }
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #00ff41;
+            cursor: pointer;
+            border: none;
+        }
+        .volume-slider::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #00ff41;
+            cursor: pointer;
+            border: none;
+        }
         audio { display: none; }
     </style>
 </head>
@@ -91,6 +120,8 @@
     <div id="air-badge" class="air-off">OFF AIR</div>
     <button id="play-btn" class="stream-btn">&#9654;</button>
     <div id="now-playing">STATION: IDLE</div>
+
+    <input type="range" class="volume-slider" id="volume-slider" min="0" max="1" step="0.05" value="1" title="Громкость">
 
     <div class="listeners">LISTENERS: <span id="listeners-count">0</span></div>
     <div id="status">signal lost</div>
@@ -157,6 +188,23 @@
         }
 
         connectWs();
+
+        // Регулятор громкости
+        const volSlider = document.getElementById('volume-slider');
+        const savedVol = localStorage.getItem('djalyx_volume');
+        if (savedVol) { volSlider.value = savedVol; }
+        volSlider.oninput = () => {
+            const p = getPlayer();
+            if (p) p.volume = parseFloat(volSlider.value);
+            localStorage.setItem('djalyx_volume', volSlider.value);
+        };
+        // перехватываем playStream чтобы проставлять громкость новым элементам
+        var _origPlay = playStream;
+        playStream = function() {
+            var el = _origPlay();
+            if (savedVol) el.volume = parseFloat(savedVol);
+            return el;
+        };
 
         // Статус вещания — опрос Icecast через Django
         const badge = document.getElementById('air-badge');

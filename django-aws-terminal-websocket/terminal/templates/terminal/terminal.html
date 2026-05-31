@@ -98,6 +98,35 @@
                 color: var(--main-green);
                 padding: 2px 8px;
             }
+            .volume-slider {
+                -webkit-appearance: none;
+                appearance: none;
+                width: 80px;
+                height: 4px;
+                background: var(--bg-color);
+                border-radius: 2px;
+                outline: none;
+                cursor: pointer;
+                vertical-align: middle;
+            }
+            .volume-slider::-webkit-slider-thumb {
+                -webkit-appearance: none;
+                appearance: none;
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                background: var(--bg-color);
+                cursor: pointer;
+                border: 2px solid var(--bg-color);
+            }
+            .volume-slider::-moz-range-thumb {
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                background: var(--bg-color);
+                cursor: pointer;
+                border: 2px solid var(--bg-color);
+            }
             @keyframes blink-air {
                 0%, 100% { color: var(--main-green); }
                 50% { color: var(--dim-green); }
@@ -136,6 +165,7 @@
                 <div><span id="now-playing">STATION: IDLE</span></div>
             </div>
             <div class="controls">
+                <input type="range" class="volume-slider" id="volume-slider" min="0" max="1" step="0.05" value="1" title="Громкость">
                 <span>LISTENERS: <span id="listeners-count">0</span></span>
                 <span id="clock">00:00:00</span>
             </div>
@@ -247,7 +277,24 @@
                 }
             };
 
-            // 4. Статус вещания + авто-восстановление
+            // 4. Регулятор громкости
+            const volSlider = document.getElementById('volume-slider');
+            const savedVol = localStorage.getItem('djalyx_volume');
+            if (savedVol) { volSlider.value = savedVol; }
+            volSlider.oninput = () => {
+                const a = getAudio();
+                if (a) a.volume = parseFloat(volSlider.value);
+                localStorage.setItem('djalyx_volume', volSlider.value);
+            };
+            // при смене audio-элемента (playStream) применяем громкость
+            const _origPlay = playStream;
+            playStream = function() {
+                var el = _origPlay();
+                if (savedVol) el.volume = parseFloat(savedVol);
+                return el;
+            };
+
+            // 5. Статус вещания + авто-восстановление
             let wasOffline = false;
             let offlineSince = null;
             let refreshTimer = null;
