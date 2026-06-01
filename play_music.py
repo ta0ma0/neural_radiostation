@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import datetime
 import json
 import os
 import random
@@ -10,7 +11,6 @@ import subprocess
 import sys
 import time
 import traceback
-import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -18,7 +18,6 @@ signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
 import requests as http_requests
 from dotenv import load_dotenv
-
 from num2words import num2words
 
 # Сторонние модули
@@ -64,7 +63,9 @@ def tty_log(message, style="info"):
         f.write(f"{full_message}\n")
 
     try:
-        http_requests.post(REMOTE_LOG_URL, data=f"{full_message}\n".encode("utf-8"), timeout=2)
+        http_requests.post(
+            REMOTE_LOG_URL, data=f"{full_message}\n".encode("utf-8"), timeout=2
+        )
     except Exception:
         pass
 
@@ -91,6 +92,7 @@ class CyberRadio:
         self.fm_enabled = False
         self._playing = False
         self._dj_cycle = 0
+        self._drain_fails = 0
 
         safe_pass = quote(ICECAST_PASSWORD, safe="")
         self.icecast_url = f"icecast://source:{safe_pass}@132.243.22.20:8000/djalyx"
@@ -108,9 +110,12 @@ class CyberRadio:
 
     def _bpm_range(self):
         h = datetime.datetime.now().hour
-        if 6 <= h < 12:   return (100, 130)
-        if 12 <= h < 18:  return (80, 110)
-        if 18 <= h < 23:  return (70, 100)
+        if 6 <= h < 12:
+            return (100, 130)
+        if 12 <= h < 18:
+            return (80, 110)
+        if 18 <= h < 23:
+            return (70, 100)
         return (60, 90)
 
     def get_random_track(self):
@@ -118,13 +123,16 @@ class CyberRadio:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             bpm_min, bpm_max = self._bpm_range()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT tracks.title, artists.name, tracks.path, artists.summary
                 FROM tracks
                 LEFT JOIN artists ON tracks.artist_id = artists.id
                 WHERE tracks.bpm BETWEEN ? AND ?
                 ORDER BY RANDOM() LIMIT 1
-            """, (bpm_min, bpm_max))
+            """,
+                (bpm_min, bpm_max),
+            )
             t = cursor.fetchone()
             if not t:
                 cursor.execute("""
@@ -149,13 +157,39 @@ class CyberRadio:
 
         if self.fm_enabled:
             cmd = [
-                "ffmpeg", "-y", "-re", "-f", "s16le", "-ar", "44100", "-ac", "2",
-                "-i", "pipe:0",
-                "-filter_complex", "[0:a]asplit=2[ice][fm]",
-                "-map", "[ice]", "-c:a", "libmp3lame", "-b:a", "64k",
-                "-f", "mp3", self.icecast_url,
-                "-map", "[fm]", "-f", "s16le", "-ar", "48000", "-ac", "1",
-                "-flush_packets", "1", "/tmp/grc_pipe",
+                "ffmpeg",
+                "-y",
+                "-re",
+                "-f",
+                "s16le",
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                "-i",
+                "pipe:0",
+                "-filter_complex",
+                "[0:a]asplit=2[ice][fm]",
+                "-map",
+                "[ice]",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "64k",
+                "-f",
+                "mp3",
+                self.icecast_url,
+                "-map",
+                "[fm]",
+                "-f",
+                "s16le",
+                "-ar",
+                "48000",
+                "-ac",
+                "1",
+                "-flush_packets",
+                "1",
+                "/tmp/grc_pipe",
             ]
             self.master_stream = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -194,7 +228,9 @@ class CyberRadio:
                 if not line:
                     break
                 text = line.decode("utf-8", errors="ignore").strip()
-                if any(p in text.lower() for p in ["error", "failed", "auth", "refused"]):
+                if any(
+                    p in text.lower() for p in ["error", "failed", "auth", "refused"]
+                ):
                     tty_log(f"[EZSTREAM] {text}", "error")
             except Exception:
                 break
@@ -256,7 +292,21 @@ class CyberRadio:
             if not chunk:
                 break
             self.master_stream.stdin.write(chunk)
-            await asyncio.wait_for(self.master_stream.stdin.drain(), timeout=120)
+            try:
+                await asyncio.wait_for(self.master_stream.stdin.drain(), timeout=120)
+                self._drain_fails = 0
+            except asyncio.TimeoutError:
+                self._drain_fails += 1
+                if self._drain_fails >= 3:
+                    tty_log("[WATCHDOG] drain упал 3 раза подряд — перезапуск мастер-стрима", "error")
+                    if self.master_stream:
+                        self.master_stream.terminate()
+                        try:
+                            await asyncio.wait_for(self.master_stream.wait(), timeout=3)
+                        except Exception:
+                            pass
+                        self.master_stream = None
+                    return
 
     def split_text_to_chunks(self, text, max_chunk_size=150):
         if not text:
@@ -339,7 +389,10 @@ class CyberRadio:
                 except:
                     pass
             if not speech_text:
-                tty_log("[⚙️ AI] LLM (LM Studio) недоступна на localhost:1234 — заглушка", "error")
+                tty_log(
+                    "[⚙️ AI] LLM (LM Studio) недоступна на localhost:1234 — заглушка",
+                    "error",
+                )
                 speech_text = f"Next track is {track['title']} by {artist}. Here we go!"
 
             chunks = self.split_text_to_chunks(speech_text)
@@ -356,19 +409,43 @@ class CyberRadio:
                 tty_log(f"Подготовлена подводка для {artist}", "ai")
                 asyncio.create_task(self.archive_speech(track, speech_files))
             else:
-                tty_log(f"[⚙️ AI] TTS не сгенерировал аудио для {artist} — проверь F5-TTS", "error")
+                tty_log(
+                    f"[⚙️ AI] TTS не сгенерировал аудио для {artist} — проверь F5-TTS",
+                    "error",
+                )
         except Exception as e:
             tty_log(f"[⚙️ AI] Ошибка генерации: {repr(e)}", "error")
         finally:
             self.is_generating = False
 
     def _time_to_words(self, dt):
-        weekdays = ["понедельник","вторник","среда","четверг","пятница","суббота","воскресенье"]
-        months = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"]
-        d = num2words(dt.day, lang='ru')
+        weekdays = [
+            "понедельник",
+            "вторник",
+            "среда",
+            "четверг",
+            "пятница",
+            "суббота",
+            "воскресенье",
+        ]
+        months = [
+            "января",
+            "февраля",
+            "марта",
+            "апреля",
+            "мая",
+            "июня",
+            "июля",
+            "августа",
+            "сентября",
+            "октября",
+            "ноября",
+            "декабря",
+        ]
+        d = num2words(dt.day, lang="ru")
         m = months[dt.month - 1]
-        h = num2words(dt.hour, lang='ru')
-        mi = num2words(dt.minute, lang='ru')
+        h = num2words(dt.hour, lang="ru")
+        mi = num2words(dt.minute, lang="ru")
         return f"{weekdays[dt.weekday()]}, {d} {m}, {h} часов {mi} минут по UTC"
 
     async def _news_speech_generator(self):
@@ -380,15 +457,23 @@ class CyberRadio:
             try:
                 conn = sqlite3.connect(db_path)
                 c = conn.cursor()
-                today_start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-                c.execute("""
+                today_start = datetime.datetime.now(datetime.timezone.utc).strftime(
+                    "%Y-%m-%d"
+                )
+                c.execute(
+                    """
                     SELECT id, text FROM description
                     WHERE added_date >= ? AND (read IS NULL OR read = 0)
                     ORDER BY id DESC LIMIT 3
-                """, (today_start,))
+                """,
+                    (today_start,),
+                )
                 rows = c.fetchall()
                 if not rows:
-                    c.execute("UPDATE description SET read = 0, read_date = NULL WHERE added_date >= ?", (today_start,))
+                    c.execute(
+                        "UPDATE description SET read = 0, read_date = NULL WHERE added_date >= ?",
+                        (today_start,),
+                    )
                     conn.commit()
                     conn.close()
                     await asyncio.sleep(60)
@@ -399,14 +484,16 @@ class CyberRadio:
                 intro = f"Сегодня {self._time_to_words(now)}. "
                 news_texts = []
                 for r in rows:
-                    clean = re.sub(r'<[^>]+>', '', r[1]).strip()
+                    clean = re.sub(r"<[^>]+>", "", r[1]).strip()
                     if len(clean) > 500:
                         clean = clean[:500] + "..."
                     news_texts.append(clean)
                 full_text = intro + " ".join(news_texts)
 
                 loop = asyncio.get_event_loop()
-                raw = await loop.run_in_executor(None, generate_dj_speech, full_text, "", "", "news")
+                raw = await loop.run_in_executor(
+                    None, generate_dj_speech, full_text, "", "", "news"
+                )
                 speech_text = raw
                 if isinstance(raw, str) and raw.startswith("{"):
                     try:
@@ -426,7 +513,12 @@ class CyberRadio:
                 if speech_files:
                     conn = sqlite3.connect(db_path)
                     c2 = conn.cursor()
-                    c2.execute("UPDATE description SET read = 1, read_date = CURRENT_TIMESTAMP WHERE id IN ({})".format(",".join("?" * len(ids))), ids)
+                    c2.execute(
+                        "UPDATE description SET read = 1, read_date = CURRENT_TIMESTAMP WHERE id IN ({})".format(
+                            ",".join("?" * len(ids))
+                        ),
+                        ids,
+                    )
                     conn.commit()
                     conn.close()
                     self.news_buffer = {"speech_files": speech_files}
@@ -461,11 +553,14 @@ class CyberRadio:
         while self.is_running:
             try:
                 await asyncio.wait_for(
-                    self._radio_cycle(tracks_played, min_before_dj, music_base, jingle_base, temp_base),
-                    timeout=1800,
+                    self._radio_cycle(
+                        tracks_played, min_before_dj, music_base, jingle_base, temp_base
+                    ),
+                    timeout=300,
                 )
                 tracks_played = self.tp
             except asyncio.TimeoutError:
+                self._drain_fails = 0
                 tty_log("[WATCHDOG] Цикл радио завис — перезапуск", "error")
                 if self.master_stream:
                     self.master_stream.terminate()
@@ -479,7 +574,9 @@ class CyberRadio:
                 tty_log(f"[WATCHDOG] Ошибка цикла: {repr(e)}", "error")
                 await asyncio.sleep(3)
 
-    async def _radio_cycle(self, tracks_played, min_before_dj, music_base, jingle_base, temp_base):
+    async def _radio_cycle(
+        self, tracks_played, min_before_dj, music_base, jingle_base, temp_base
+    ):
         if self.master_stream is None or self.master_stream.returncode is not None:
             tty_log("Master-стрим упал, рестарт...", "error")
             await self.start_master_stream()
@@ -535,8 +632,6 @@ class CyberRadio:
             if is_music and not is_jingle and not is_speech:
                 tracks_played += 1
                 tty_log(f"📈 Счетчик: {tracks_played}/{min_before_dj}", "info")
-            else:
-                tty_log(f"⏸ Технический блок (не в счет)", "info")
 
             if is_speech:
                 try:
