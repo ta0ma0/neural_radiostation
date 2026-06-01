@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import asyncio
-import base64
 import datetime
 import json
 import os
@@ -156,18 +155,6 @@ class CyberRadio:
             return
         tty_log("[*] [System]: Подъем Master-узла вещания...")
 
-        # освобождаем mount на Icecast от предыдущего источника
-        try:
-            import urllib.request
-            admin_auth = "admin:4MHs7KsM_bPwJSe3"
-            encoded = base64.b64encode(admin_auth.encode()).decode()
-            req = urllib.request.Request("http://132.243.22.20:8000/admin/killsource?mount=/djalyx")
-            req.add_header("Authorization", f"Basic {encoded}")
-            urllib.request.urlopen(req, timeout=5)
-        except Exception:
-            pass
-        await asyncio.sleep(2)
-
         if self.fm_enabled:
             cmd = [
                 "ffmpeg",
@@ -221,7 +208,7 @@ class CyberRadio:
             with open(ez_config, "w") as f:
                 f.write(xml)
             os.chmod(ez_config, 0o600)
-            cmd = f"ffmpeg -y -f s16le -ar 44100 -ac 2 -i pipe:0 -f mp3 -b:a 64k - | ezstream -c {ez_config}"
+            cmd = f"ffmpeg -y -f s16le -ar 44100 -ac 2 -i pipe:0 -f mp3 -b:a 32k - | ezstream -c {ez_config}"
             self.master_stream = await asyncio.create_subprocess_shell(
                 cmd,
                 stdin=asyncio.subprocess.PIPE,
@@ -282,6 +269,9 @@ class CyberRadio:
 
         try:
             await self._stream_track(decoder)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as e:
+            tty_log(f"[АВАРИЯ] Соединение потеряно: {repr(e)}", "error")
+            self._restart_all()
         except Exception as e:
             tty_log(f"Ошибка трансляции трека: {repr(e)}", "error")
         finally:
@@ -299,6 +289,12 @@ class CyberRadio:
             except Exception:
                 pass
 
+    def _restart_all(self):
+        tty_log("[АВАРИЯ] Перезапуск всей станции...", "error")
+        import os, sys
+        os.system("bash tools/restart_all.sh &>/tmp/restart.log &")
+        sys.exit(0)
+
     async def _stream_track(self, decoder):
         while True:
             chunk = await asyncio.wait_for(decoder.stdout.read(16384), timeout=30)
@@ -311,15 +307,7 @@ class CyberRadio:
             except asyncio.TimeoutError:
                 self._drain_fails += 1
                 if self._drain_fails >= 3:
-                    tty_log("[WATCHDOG] drain упал 3 раза подряд — перезапуск мастер-стрима", "error")
-                    if self.master_stream:
-                        self.master_stream.terminate()
-                        try:
-                            await asyncio.wait_for(self.master_stream.wait(), timeout=3)
-                        except Exception:
-                            pass
-                        self.master_stream = None
-                    return
+                    self._restart_all()
 
     def split_text_to_chunks(self, text, max_chunk_size=150):
         if not text:
