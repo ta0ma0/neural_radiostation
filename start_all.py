@@ -17,8 +17,11 @@ RADIO_SCRIPT = os.path.join(PROJECT_DIR, "play_music.py")
 
 REMOTE_URL = "https://djalyx.2077911.xyz"
 REMOTE_CHECK_INTERVAL = 30
+MAX_RESTARTS = 5
+RESTART_WINDOW = 3600
 
 FM_ENABLED = "--fm" in sys.argv
+_restart_times = []
 
 CUSTOM_ENV = os.environ.copy()
 CUSTOM_ENV.update(
@@ -116,7 +119,13 @@ def start_station():
         while True:
             # Мониторинг нейродиджея
             if radio_proc.poll() is not None:
-                print(f"[CRITICAL] Alyx упал (Код: {radio_proc.returncode}). Рестарт...")
+                now = time.time()
+                _restart_times.append(now)
+                _restart_times[:] = [t for t in _restart_times if now - t < RESTART_WINDOW]
+                if len(_restart_times) > MAX_RESTARTS:
+                    print(f"[STOP] Превышен лимит ({MAX_RESTARTS}) перезапусков за час. Радио остановлено.")
+                    break
+                print(f"[CRITICAL] Alyx упал (Код: {radio_proc.returncode}). Рестарт ({len(_restart_times)}/{MAX_RESTARTS})...")
                 radio_proc = start_radio()
                 processes.append(radio_proc)
 

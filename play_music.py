@@ -292,9 +292,8 @@ class CyberRadio:
     def _restart_all(self):
         tty_log("[АВАРИЯ] Перезапуск всей станции...", "error")
         import os, sys
-        script = os.path.join(PROJECT_DIR, "tools", "restart_all.sh")
-        os.system(f"pkill -f start_all.py 2>/dev/null; bash {script} &>/tmp/restart.log")
-        sys.exit(0)
+        os.system("pkill -9 ezstream 2>/dev/null; pkill -f start_all.py 2>/dev/null")
+        sys.exit(1)
 
     async def _stream_track(self, decoder):
         while True:
