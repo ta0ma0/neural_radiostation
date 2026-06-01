@@ -30,8 +30,8 @@ sys.stdout = os.fdopen(sys.stdout.fileno(), "w", encoding="utf-8", buffering=1)
 sys.stderr = os.fdopen(sys.stderr.fileno(), "w", encoding="utf-8", buffering=1)
 
 # Настройки путей
-load_dotenv()
 PROJECT_DIR = "/home/ruslan/Develop/Music/dj_alyx"
+load_dotenv(os.path.join(PROJECT_DIR, ".env"))
 ARCHIVE_DIR = os.path.join(PROJECT_DIR, "archives")
 TEMP_DIR = os.path.join(PROJECT_DIR, "temp_speech")
 JINGLES_DIR = os.path.join(PROJECT_DIR, "jingles")
@@ -292,7 +292,7 @@ class CyberRadio:
     def _restart_all(self):
         tty_log("[АВАРИЯ] Перезапуск всей станции...", "error")
         import os, sys
-        os.system("bash tools/restart_all.sh &>/tmp/restart.log &")
+        os.system("pkill -f start_all.py 2>/dev/null; bash tools/restart_all.sh &>/tmp/restart.log")
         sys.exit(0)
 
     async def _stream_track(self, decoder):
