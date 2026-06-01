@@ -7,12 +7,12 @@ echo "$(date)"
 
 # 1. Убить все процессы радио
 echo "[*] Останавливаю процессы..."
-pkill -f 'start_all.py' 2>/dev/null
-pkill -f 'play_music.py' 2>/dev/null
-pkill -f 'ezstream' 2>/dev/null
-pkill -f 'ffmpeg.*icecast' 2>/dev/null
-pkill -f 'ffmpeg.*pipe:0' 2>/dev/null
-pkill -f 'ffmpeg.*pipe:1' 2>/dev/null
+pkill -9 -f 'start_all.py' 2>/dev/null
+pkill -9 -f 'play_music.py' 2>/dev/null
+pkill -9 -f 'ezstream' 2>/dev/null
+pkill -9 -f 'ffmpeg.*icecast' 2>/dev/null
+pkill -9 -f 'ffmpeg.*pipe:0' 2>/dev/null
+pkill -9 -f 'ffmpeg.*pipe:1' 2>/dev/null
 sleep 2
 
 # 2. Убить network monitor

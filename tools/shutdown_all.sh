@@ -17,9 +17,9 @@ sleep 1
 
 # 3. Потом ezstream и ffmpeg
 echo "[*] Останавливаю ezstream и ffmpeg..."
-pkill -f 'ezstream' 2>/dev/null
-pkill -f 'ffmpeg.*pipe:0' 2>/dev/null
-pkill -f 'ffmpeg.*pipe:1' 2>/dev/null
+pkill -9 -f 'ezstream' 2>/dev/null
+pkill -9 -f 'ffmpeg.*pipe:0' 2>/dev/null
+pkill -9 -f 'ffmpeg.*pipe:1' 2>/dev/null
 sleep 1
 
 # 4. Старый icecast источник и network monitor

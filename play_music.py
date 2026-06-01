@@ -154,6 +154,8 @@ class CyberRadio:
         if self.master_stream is not None and self.master_stream.returncode is None:
             return
         tty_log("[*] [System]: Подъем Master-узла вещания...")
+        os.system("pkill -9 ezstream 2>/dev/null; pkill -9 ffmpeg.*pipe:0 2>/dev/null")
+        await asyncio.sleep(1)
 
         if self.fm_enabled:
             cmd = [
