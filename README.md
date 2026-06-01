@@ -2,7 +2,6 @@
 
 **Listen live:** [https://djalyx.2077911.xyz/](https://djalyx.2077911.xyz/)
 **Stream For Mobile:** [https://djalyx.2077911.xyz/mobile](https://djalyx.2077911.xyz/mobile)
-**Listeners map:** [https://djalyx.2077911.xyz/listeners/](https://djalyx.2077911.xyz/listeners/)
 **Icecast admin:** [https://djalyx.2077911.xyz/icecast/admin/](https://djalyx.2077911.xyz/icecast/admin/)
 
 AI-powered radio station with a neural DJ. Plays music from a local collection, generates live commentary via LLM, and voices it with neural TTS.
@@ -40,7 +39,7 @@ Development active. Station is online but not 24/7. Schedule is being formed.
 ## Architecture
 
 ```
-Local machine                    Remote server (firstbyte)
+Local machine                    Remote server
 ┌────────────────────┐           ┌───────────────────────────────┐
 │ play_music.py      │  push via │ Icecast :8000                 │
 │  → PCM pipe        │──ezstream→│ nginx :80/443                 │
@@ -85,8 +84,6 @@ bash tools/restart_all.sh
 | Stop gracefully | `bash tools/shutdown_all.sh` |
 | Full restart | `bash tools/restart_all.sh` |
 | Collect news | `python3 tools/xakep_xml_parser.py` |
-| Listener map (local) | `python3 tools/listener_map.html` |
-| Network monitor | `python3 tools/network_monitor.py` |
 | Bump version | `sh tools/bump_version.sh` |
 
 ## Stack
@@ -115,7 +112,6 @@ dj_alyx/
 │   ├── ezstream.xml.template  # ezstream config template
 │   ├── restart_all.sh         # full restart script
 │   ├── shutdown_all.sh        # graceful stop script
-│   ├── network_monitor.py     # Icecast connectivity diagnostics
 │   ├── xakep_xml_parser.py    # news parser
 │   └── bump_version.sh        # auto-increment VERSION
 ├── django-aws-terminal-websocket/  # Django web service

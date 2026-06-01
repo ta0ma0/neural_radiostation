@@ -210,7 +210,7 @@ class CyberRadio:
             with open(ez_config, "w") as f:
                 f.write(xml)
             os.chmod(ez_config, 0o600)
-            cmd = f"ffmpeg -y -f s16le -ar 44100 -ac 2 -i pipe:0 -f mp3 -b:a 32k - | ezstream -c {ez_config}"
+            cmd = f"ffmpeg -y -f s16le -ar 44100 -ac 2 -i pipe:0 -f mp3 -b:a 64k - | ezstream -c {ez_config}"
             self.master_stream = await asyncio.create_subprocess_shell(
                 cmd,
                 stdin=asyncio.subprocess.PIPE,
@@ -293,7 +293,9 @@ class CyberRadio:
 
     def _restart_all(self):
         tty_log("[АВАРИЯ] Перезапуск всей станции...", "error")
-        import os, sys
+        import os
+        import sys
+
         os.system("pkill -9 ezstream 2>/dev/null; pkill -f start_all.py 2>/dev/null")
         sys.exit(1)
 
