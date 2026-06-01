@@ -91,6 +91,8 @@ class CyberRadio:
         self.master_stream = None
         self.fm_enabled = False
         self._playing = False
+        self._playing_track = False
+        self._last_track_end = time.time()
         self._dj_cycle = 0
         self._drain_fails = 0
 
@@ -532,6 +534,18 @@ class CyberRadio:
                 tty_log(f"[⚙️ AI] Ошибка генерации новостей: {repr(e)}", "error")
                 await asyncio.sleep(60)
 
+    async def _track_watchdog(self):
+        while self.is_running:
+            await asyncio.sleep(10)
+            try:
+                if not self._playing_track and not self.playlist:
+                    elapsed = time.time() - self._last_track_end
+                    if elapsed > 120:
+                        tty_log("[WATCHDOG] Простой 2 мин — перезапуск", "error")
+                        self._restart_all()
+            except Exception:
+                pass
+
     async def run_radio(self):
         # 1. Очистка старья (пути приводим к абсолютному виду сразу)
         temp_base = os.path.abspath(TEMP_DIR)
@@ -551,30 +565,17 @@ class CyberRadio:
         await self.start_master_stream()
 
         asyncio.create_task(self._news_speech_generator())
+        asyncio.create_task(self._track_watchdog())
 
         tracks_played = 0
         min_before_dj = 5
 
         while self.is_running:
             try:
-                await asyncio.wait_for(
-                    self._radio_cycle(
-                        tracks_played, min_before_dj, music_base, jingle_base, temp_base
-                    ),
-                    timeout=300,
+                await self._radio_cycle(
+                    tracks_played, min_before_dj, music_base, jingle_base, temp_base
                 )
                 tracks_played = self.tp
-            except asyncio.TimeoutError:
-                self._drain_fails = 0
-                tty_log("[WATCHDOG] Цикл радио завис — перезапуск", "error")
-                if self.master_stream:
-                    self.master_stream.terminate()
-                    try:
-                        await asyncio.wait_for(self.master_stream.wait(), timeout=3)
-                    except Exception:
-                        pass
-                    self.master_stream = None
-                await self.start_master_stream()
             except Exception as e:
                 tty_log(f"[WATCHDOG] Ошибка цикла: {repr(e)}", "error")
                 await asyncio.sleep(3)
@@ -628,15 +629,18 @@ class CyberRadio:
         if self.playlist:
             item = self.playlist.pop(0)
             current_path = os.path.normpath(os.path.abspath(item["path"]))
-            await self.play_single_file(item)
-
             is_jingle = current_path.startswith(os.path.normpath(jingle_base))
             is_speech = current_path.startswith(os.path.normpath(temp_base))
             is_music = current_path.startswith(os.path.normpath(music_base))
 
+            self._playing_track = is_music and not is_jingle and not is_speech
+            await self.play_single_file(item)
+            self._playing_track = False
+
             if is_music and not is_jingle and not is_speech:
                 tracks_played += 1
                 tty_log(f"📈 Счетчик: {tracks_played}/{min_before_dj}", "info")
+                self._last_track_end = time.time()
 
             if is_speech:
                 try:
