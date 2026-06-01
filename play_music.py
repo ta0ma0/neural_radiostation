@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import base64
 import datetime
 import json
 import os
@@ -154,6 +155,18 @@ class CyberRadio:
         if self.master_stream is not None and self.master_stream.returncode is None:
             return
         tty_log("[*] [System]: Подъем Master-узла вещания...")
+
+        # освобождаем mount на Icecast от предыдущего источника
+        try:
+            import urllib.request
+            admin_auth = "admin:4MHs7KsM_bPwJSe3"
+            encoded = base64.b64encode(admin_auth.encode()).decode()
+            req = urllib.request.Request("http://132.243.22.20:8000/admin/killsource?mount=/djalyx")
+            req.add_header("Authorization", f"Basic {encoded}")
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            pass
+        await asyncio.sleep(2)
 
         if self.fm_enabled:
             cmd = [
