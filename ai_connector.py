@@ -120,6 +120,13 @@ def _digits_to_words(text):
     return _RE_DIGIT.sub(lambda m: num2words(int(m.group()), lang='ru'), text)
 
 
+_RE_STAGE = re.compile(r'\([^)]*\)|\[[^\]]*\]|\*[^*]*\*')
+
+
+def _clean_speech(text):
+    return _RE_STAGE.sub('', text).replace('  ', ' ').strip()
+
+
 def generate_dj_speech(artist_info: str, track_name: str = "", artist_name: str = "", prompt_type: str = "track") -> str:
     try:
         response = requests.get("http://127.0.0.1:1234/v1/models", timeout=10)
@@ -153,6 +160,7 @@ def generate_dj_speech(artist_info: str, track_name: str = "", artist_name: str 
     if "Сетевая ошибка" in content or "Ошибка" in content:
         return None
 
+    content = _clean_speech(content)
     return _digits_to_words(content)
 
 
