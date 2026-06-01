@@ -68,7 +68,7 @@ def check_remote():
 
 def start_radio():
     cmd = [
-        "conda", "run", "-n", ENV_NAME, "--no-capture-output",
+        "/opt/miniconda3/condabin/conda", "run", "-n", ENV_NAME, "--no-capture-output",
         "python", "-u", RADIO_SCRIPT,
     ]
     if FM_ENABLED:
