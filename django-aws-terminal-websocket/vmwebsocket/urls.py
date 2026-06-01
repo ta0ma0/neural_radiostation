@@ -48,4 +48,5 @@ urlpatterns = [
     path("sw.js", static_file("sw.js", "application/javascript")),
     path("static/terminal/icon-192.png", static_file("icon-192.png", "image/png")),
     path("static/terminal/icon-512.png", static_file("icon-512.png", "image/png")),
+    path("static/terminal/howler.min.js", static_file("howler.min.js", "application/javascript")),
 ]

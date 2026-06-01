@@ -126,7 +126,7 @@
     <div class="listeners">LISTENERS: <span id="listeners-count">0</span></div>
     <div id="status">signal lost</div>
 
-    <audio id="player" preload="none"></audio>
+    <script src="/static/terminal/howler.min.js"></script>
 
     <script>
         if ('serviceWorker' in navigator) {
@@ -138,30 +138,26 @@
         const statusBar = document.getElementById('status');
         const listenersSpan = document.getElementById('listeners-count');
 
-        function getPlayer() { return document.getElementById('player'); }
+        let howl = null;
         function streamUrl() { return '/stream/djalyx?_=' + Date.now(); }
 
         function playStream() {
-            var old = getPlayer();
-            if (old) old.remove();
-            var el = document.createElement('audio');
-            el.id = 'player';
-            el.preload = 'none';
-            el.autoplay = false;
-            document.body.appendChild(el);
-            el.src = streamUrl();
-            el.play().then(function() {
-                btn.innerHTML = '&#9646;&#9646;';
-                btn.classList.add('playing');
-                nowPlaying.textContent = 'STATION: ON AIR';
-                statusBar.textContent = 'connected';
-                statusBar.style.color = '#00ff41';
-                requestWakeLock();
-            }).catch(function() {
-                statusBar.textContent = 'playback blocked';
-                statusBar.style.color = '#ff0041';
+            if (howl) howl.unload();
+            howl = new Howl({
+                src: [streamUrl()],
+                format: ['mp3'],
+                html5: true,
+                volume: parseFloat(localStorage.getItem('djalyx_volume') || 1),
+                onplay: function() {
+                    btn.innerHTML = '&#9646;&#9646;';
+                    btn.classList.add('playing');
+                    nowPlaying.textContent = 'STATION: ON AIR';
+                    statusBar.textContent = 'connected';
+                    statusBar.style.color = '#00ff41';
+                    requestWakeLock();
+                },
             });
-            return el;
+            howl.play();
         }
 
         let ws = null;
@@ -192,18 +188,10 @@
         // Регулятор громкости
         const volSlider = document.getElementById('volume-slider');
         const savedVol = localStorage.getItem('djalyx_volume');
-        if (savedVol) { volSlider.value = savedVol; }
+        if (savedVol) { volSlider.value = savedVol; Howler.volume(parseFloat(savedVol)); }
         volSlider.oninput = () => {
-            const p = getPlayer();
-            if (p) p.volume = parseFloat(volSlider.value);
+            Howler.volume(parseFloat(volSlider.value));
             localStorage.setItem('djalyx_volume', volSlider.value);
-        };
-        // перехватываем playStream чтобы проставлять громкость новым элементам
-        var _origPlay = playStream;
-        playStream = function() {
-            var el = _origPlay();
-            if (savedVol) el.volume = parseFloat(savedVol);
-            return el;
         };
 
         // Статус вещания — опрос Icecast через Django
@@ -226,8 +214,8 @@
                     listenersSpan.textContent = s.listeners;
                     offlineSince = null;
                     if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
-                    if (wasOffline && !player.paused && !userDisconnected) {
-                        tryReconnect();
+                    if (wasOffline && howl && !howl.playing() && !userDisconnected) {
+                        playStream();
                     }
                 } else {
                     badge.className = 'air-off';
@@ -265,13 +253,13 @@
             if (document.visibilityState === 'visible') requestWakeLock();
         });
         btn.onclick = () => {
-            var p = getPlayer();
-            if (!p || p.paused) {
+            if (!howl || !howl.playing()) {
                 userDisconnected = false;
                 playStream();
             } else {
                 userDisconnected = true;
-                if (p) { p.pause(); p.removeAttribute('src'); p.load(); }
+                howl.unload();
+                howl = null;
                 btn.innerHTML = '&#9654;';
                 btn.classList.remove('playing');
                 nowPlaying.textContent = 'STATION: IDLE';

@@ -170,7 +170,7 @@
                 <span id="clock">00:00:00</span>
             </div>
         </div>
-        <audio id="audio-player" preload="none"></audio>
+        <script src="/static/terminal/howler.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
         <script>
             // 1. Инициализация терминала
@@ -230,48 +230,36 @@
 
             term.onData((data) => socket.send(new TextEncoder().encode(data)));
 
-            // 3. Audio Player логика
+            // 3. Audio Player логика (Howler.js)
             const playBtn = document.getElementById("play-pause");
             const nowPlayingElement = document.getElementById("now-playing");
 
-            let reconnectTimer = null;
+            let howl = null;
             let userDisconnected = false;
-
-            function getAudio() { return document.getElementById('audio-player'); }
 
             function streamUrl() { return '/stream/djalyx?_=' + Date.now(); }
 
             function playStream() {
-                var old = getAudio();
-                if (old) old.remove();
-                var el = document.createElement('audio');
-                el.id = 'audio-player';
-                el.preload = 'none';
-                el.autoplay = false;
-                document.body.appendChild(el);
-                el.src = streamUrl();
-                el.play().catch(function(){});
-                return el;
-            }
-
-            function scheduleReconnect(ms) {
-                clearTimeout(reconnectTimer);
-                reconnectTimer = setTimeout(function() {
-                    if (!userDisconnected) { playStream(); }
-                }, ms);
+                if (howl) howl.unload();
+                howl = new Howl({
+                    src: [streamUrl()],
+                    format: ['mp3'],
+                    html5: true,
+                    volume: parseFloat(localStorage.getItem('djalyx_volume') || 1),
+                });
+                howl.play();
             }
 
             playBtn.onclick = () => {
-                var a = getAudio();
-                if (!a || a.paused) {
+                if (!howl || !howl.playing()) {
                     userDisconnected = false;
                     playStream();
                     playBtn.innerText = "[ DISCONNECT ]";
                     nowPlayingElement.innerText = "STATION: ON AIR";
                 } else {
                     userDisconnected = true;
-                    var a = getAudio();
-                    if (a) { a.pause(); a.removeAttribute('src'); a.load(); }
+                    howl.unload();
+                    howl = null;
                     playBtn.innerText = "[ CONNECT TO STREAM ]";
                     nowPlayingElement.innerText = "STATION: IDLE";
                 }
@@ -282,17 +270,10 @@
             const savedVol = localStorage.getItem('djalyx_volume');
             if (savedVol) { volSlider.value = savedVol; }
             volSlider.oninput = () => {
-                const a = getAudio();
-                if (a) a.volume = parseFloat(volSlider.value);
+                Howler.volume(parseFloat(volSlider.value));
                 localStorage.setItem('djalyx_volume', volSlider.value);
             };
-            // при смене audio-элемента (playStream) применяем громкость
-            const _origPlay = playStream;
-            playStream = function() {
-                var el = _origPlay();
-                if (savedVol) el.volume = parseFloat(savedVol);
-                return el;
-            };
+            if (savedVol) Howler.volume(parseFloat(savedVol));
 
             // 5. Статус вещания + авто-восстановление
             let wasOffline = false;
@@ -307,7 +288,7 @@
                     el.className = s.streaming ? 'air-on' : 'air-off';
                     document.getElementById('listeners-count').innerText = s.listeners;
                     if (s.streaming) {
-                        if (wasOffline && getAudio() && !getAudio().paused && !userDisconnected) {
+                        if (wasOffline && howl && !howl.playing() && !userDisconnected) {
                             playStream();
                         }
                         offlineSince = null;
