@@ -40,12 +40,7 @@ cd /home/ruslan/Develop/Music/dj_alyx
 nohup python3 -u start_all.py &>/tmp/start_all_restart.log &
 echo "[✓] start_all.py PID: $!"
 
-# 6. Запустить network monitor
-echo "[*] Запускаю network monitor..."
-nohup python3 tools/network_monitor.py &>/tmp/netmon.log &
-echo "[✓] network_monitor PID: $!"
-
-# 7. Ждать и проверить
+# 6. Ждать и проверить
 sleep 10
 STATUS=$(curl -s --max-time 3 https://djalyx.2077911.xyz/api/status/ 2>&1 | grep -oP '(?<="streaming":)[^,]+')
 echo "[*] Статус: $STATUS"
