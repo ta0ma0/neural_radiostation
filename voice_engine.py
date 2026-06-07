@@ -1,6 +1,9 @@
 import os
 import subprocess
+import threading
 from datetime import datetime
+
+_tts_lock = threading.Lock()
 
 
 def tty_log(message, style="info"):
@@ -37,41 +40,45 @@ class AlyxVoice:
         tty_log("[*] [System]: Voice Engine инициализирован.")
 
     def generate(self, text, output_path, speed=1.1):
-        # 1. Определяем пути
-        base_path = os.path.splitext(output_path)[0]
-        wav_path = base_path + ".wav"
-        mp3_path = base_path + ".mp3"
-
-        output_dir = os.path.dirname(wav_path)
-        output_filename = os.path.basename(wav_path)
-
-        cmd = [
-            "python",
-            "-m",
-            "f5_tts.infer.infer_cli",
-            "-p",
-            self.model_path,
-            "-r",
-            self.ref_audio,
-            "-s",
-            self.ref_text,
-            "-t",
-            text,
-            "-o",
-            output_dir,
-            "-w",
-            output_filename,
-            "--device",
-            self.device,
-            "--nfe_step",
-            "10",
-            "--speed",
-            str(speed),
-        ]
+        if not _tts_lock.acquire(blocking=False):
+            tty_log("[!] TTS уже занят, пропускаю генерацию", "error")
+            return None
 
         try:
+            # 1. Определяем пути
+            base_path = os.path.splitext(output_path)[0]
+            wav_path = base_path + ".wav"
+            mp3_path = base_path + ".mp3"
+
+            output_dir = os.path.dirname(wav_path)
+            output_filename = os.path.basename(wav_path)
+
+            cmd = [
+                "python",
+                "-m",
+                "f5_tts.infer.infer_cli",
+                "-p",
+                self.model_path,
+                "-r",
+                self.ref_audio,
+                "-s",
+                self.ref_text,
+                "-t",
+                text,
+                "-o",
+                output_dir,
+                "-w",
+                output_filename,
+                "--device",
+                self.device,
+                "--nfe_step",
+                "10",
+                "--speed",
+                str(speed),
+            ]
+
             # 2. Генерация WAV
-            subprocess.run(cmd, check=True, capture_output=True)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=300)
 
             if not os.path.exists(wav_path):
                 return None
@@ -88,7 +95,7 @@ class AlyxVoice:
                 "2",
                 mp3_path,
             ]
-            subprocess.run(conv_cmd, check=True, capture_output=True)
+            subprocess.run(conv_cmd, check=True, capture_output=True, timeout=30)
 
             # 4. Удаляем исходный WAV
             if os.path.exists(wav_path):
@@ -98,3 +105,8 @@ class AlyxVoice:
         except subprocess.CalledProcessError as e:
             tty_log(f"[!] Ошибка CLI или FFmpeg: {e.stderr.decode()}")
             return None
+        except subprocess.TimeoutExpired:
+            tty_log(f"[!] Таймаут TTS: {text[:50]}...", "error")
+            return None
+        finally:
+            _tts_lock.release()

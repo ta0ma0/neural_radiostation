@@ -2,3 +2,6 @@ python-dotenv
 mutagen
 pygame
 f5-tts
+pytest
+pytest-asyncio
+pytest-mock

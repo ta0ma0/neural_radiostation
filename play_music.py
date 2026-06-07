@@ -280,11 +280,12 @@ class CyberRadio:
         asyncio.create_task(self._confirm_stream_healthy())
 
     async def _monitor_master_stderr(self):
-        if not self.master_stream or not self.master_stream.stderr:
+        stream = self.master_stream
+        if not stream or not stream.stderr:
             return
         while True:
             try:
-                line = await self.master_stream.stderr.readline()
+                line = await stream.stderr.readline()
                 if not line:
                     break
                 text = line.decode("utf-8", errors="ignore").strip()
@@ -294,6 +295,12 @@ class CyberRadio:
                     tty_log(f"[EZSTREAM] {text}", "error")
             except Exception:
                 break
+
+        if self.master_stream is not stream:
+            return
+
+        rc = self.master_stream.returncode if self.master_stream else "N/A"
+        tty_log(f"[FFMPEG] Процесс завершён: код {rc}", "error")
 
         self._restart_fails += 1
         tty_log(f"[EZSTREAM] Стрим упал (попытка {self._restart_fails}/{MAX_CONSECUTIVE_FAILS})", "error")
@@ -340,7 +347,6 @@ class CyberRadio:
 
         try:
             await self._stream_track(decoder)
-            await self._keepalive_pipe()
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as e:
             tty_log(f"[АВАРИЯ] Соединение потеряно: {repr(e)}", "error")
             await self._restart_master_stream()
@@ -433,6 +439,7 @@ class CyberRadio:
         while True:
             chunk = await asyncio.wait_for(decoder.stdout.read(4096), timeout=30)
             if not chunk:
+                tty_log("[TRACK] EOF — трек закончился", "info")
                 break
             self.master_stream.stdin.write(chunk)
             try:
@@ -442,18 +449,6 @@ class CyberRadio:
                 self._drain_fails += 1
                 if self._drain_fails >= 6:
                     await self._restart_master_stream()
-
-    async def _keepalive_pipe(self):
-        silence = b'\x00\x00' * 2048
-        while not self.playlist and self.is_running:
-            try:
-                self.master_stream.stdin.write(silence)
-                await asyncio.wait_for(
-                    self.master_stream.stdin.drain(), timeout=5
-                )
-            except (BrokenPipeError, ConnectionResetError, AttributeError):
-                break
-            await asyncio.sleep(0.1)
 
     def split_text_to_chunks(self, text, max_chunk_size=150):
         if not text:
