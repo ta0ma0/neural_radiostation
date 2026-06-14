@@ -72,13 +72,26 @@ class AlyxVoice:
                 "--device",
                 self.device,
                 "--nfe_step",
-                "10",
+                "6",
                 "--speed",
                 str(speed),
             ]
 
-            # 2. Генерация WAV
-            subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+            # 2. Генерация WAV (Popen чтобы убить при таймауте)
+            nice_cmd = ["nice", "-n", "19"] + cmd
+            proc = subprocess.Popen(nice_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                stdout, stderr = proc.communicate(timeout=300)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+                os.system("pkill -9 -f 'f5_tts.infer.infer_cli' 2>/dev/null")
+                tty_log(f"[!] Таймаут TTS: {text[:50]}...", "error")
+                return None
+
+            if proc.returncode != 0:
+                tty_log(f"[!] Ошибка CLI: {stderr.decode()}")
+                return None
 
             if not os.path.exists(wav_path):
                 return None
@@ -95,18 +108,21 @@ class AlyxVoice:
                 "2",
                 mp3_path,
             ]
-            subprocess.run(conv_cmd, check=True, capture_output=True, timeout=30)
+            conv_proc = subprocess.Popen(conv_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                conv_stdout, conv_stderr = conv_proc.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                conv_proc.kill()
+                conv_proc.wait(timeout=5)
+                tty_log(f"[!] Таймаут ffmpeg конвертации TTS", "error")
+                return None
 
-            # 4. Удаляем исходный WAV
+            if conv_proc.returncode != 0:
+                tty_log(f"[!] Ошибка FFmpeg: {conv_stderr.decode()}")
+                return None
             if os.path.exists(wav_path):
                 os.remove(wav_path)
 
             return mp3_path
-        except subprocess.CalledProcessError as e:
-            tty_log(f"[!] Ошибка CLI или FFmpeg: {e.stderr.decode()}")
-            return None
-        except subprocess.TimeoutExpired:
-            tty_log(f"[!] Таймаут TTS: {text[:50]}...", "error")
-            return None
         finally:
             _tts_lock.release()

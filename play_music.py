@@ -22,7 +22,7 @@ from num2words import num2words
 
 # Сторонние модули
 from ai_connector import generate_dj_speech
-from last_fm import main as search_artist_info
+from tools.discogs_connector import search_artist_info
 from voice_engine import AlyxVoice
 
 # Настройка буферизации для логов
@@ -60,8 +60,9 @@ def read_network_status():
     except (FileNotFoundError, OSError):
         return "OK"
 
+
 # --- Защита от runaway restart ---
-MAX_CONSECUTIVE_FAILS = 3
+MAX_CONSECUTIVE_FAILS = 5
 MIN_RESTART_DELAY = 3
 MAX_RESTART_DELAY = 30
 
@@ -88,8 +89,6 @@ def tty_log(message, style="info"):
         pass
 
     print(full_message, flush=True)
-
-
 
 
 class CyberRadio:
@@ -148,12 +147,12 @@ class CyberRadio:
     def _bpm_range(self):
         h = datetime.datetime.now().hour
         if 6 <= h < 12:
-            return (100, 130)
+            return (80, 160)
         if 12 <= h < 18:
-            return (80, 110)
+            return (70, 140)
         if 18 <= h < 23:
-            return (70, 100)
-        return (60, 90)
+            return (60, 120)
+        return (0, 70)
 
     def get_random_track(self):
         try:
@@ -277,7 +276,6 @@ class CyberRadio:
 
         asyncio.create_task(self._monitor_master_stderr())
         await asyncio.sleep(2)
-        asyncio.create_task(self._confirm_stream_healthy())
 
     async def _monitor_master_stderr(self):
         stream = self.master_stream
@@ -299,18 +297,7 @@ class CyberRadio:
         if self.master_stream is not stream:
             return
 
-        rc = self.master_stream.returncode if self.master_stream else "N/A"
-        tty_log(f"[FFMPEG] Процесс завершён: код {rc}", "error")
-
-        self._restart_fails += 1
-        tty_log(f"[EZSTREAM] Стрим упал (попытка {self._restart_fails}/{MAX_CONSECUTIVE_FAILS})", "error")
-
-        if self._restart_fails >= MAX_CONSECUTIVE_FAILS:
-            tty_log(f"[АВАРИЯ] {MAX_CONSECUTIVE_FAILS} падений стрима подряд — полный рестарт", "error")
-            self._restart_all()
-            return
-
-        asyncio.create_task(self._restart_master_stream())
+        tty_log(f"[EZSTREAM] Стрим упал", "error")
 
     async def play_single_file(self, track):
         if isinstance(track, str):
@@ -349,6 +336,13 @@ class CyberRadio:
             await self._stream_track(decoder)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as e:
             tty_log(f"[АВАРИЯ] Соединение потеряно: {repr(e)}", "error")
+            await asyncio.sleep(1)
+            if self.master_stream:
+                try:
+                    rc = self.master_stream.returncode
+                except Exception:
+                    rc = "?"
+                tty_log(f"[FFMPEG] exit code: {rc}", "error")
             await self._restart_master_stream()
         except Exception as e:
             tty_log(f"Ошибка трансляции трека: {repr(e)}", "error")
@@ -386,34 +380,59 @@ class CyberRadio:
             tty_log("[NET] Связь потеряна, рестарт отложен.", "error")
             return
 
+        import traceback
+
+        stack = traceback.extract_stack(limit=4)
+        caller = stack[-2] if len(stack) >= 2 else stack[-1]
+        tty_log(
+            f"[RESTART] Вызов из {caller.filename}:{caller.lineno} {caller.name}()",
+            "error",
+        )
+
         self._restarting = True
         try:
             now = time.time()
             since_last = now - self._last_restart_time
             if self._restart_fails > 0:
-                delay = min(MIN_RESTART_DELAY * (2 ** (self._restart_fails - 1)), MAX_RESTART_DELAY)
+                delay = min(
+                    MIN_RESTART_DELAY * (2 ** (self._restart_fails - 1)),
+                    MAX_RESTART_DELAY,
+                )
                 if since_last < delay:
                     wait = delay - since_last
-                    tty_log(f"[RESTART] Cooldown {wait:.0f}с (попытка {self._restart_fails})", "error")
+                    tty_log(
+                        f"[RESTART] Cooldown {wait:.0f}с (попытка {self._restart_fails})",
+                        "error",
+                    )
                     await asyncio.sleep(wait)
 
             self._last_restart_time = time.time()
 
-            tty_log(f"[RESTART] Пересоздание стрим-пайплайна (попытка {self._restart_fails})...", "error")
+            old_stream = self.master_stream
+            tty_log(
+                f"[RESTART] Пересоздание стрим-пайплайна (попытка {self._restart_fails})...",
+                "error",
+            )
 
-            if self.master_stream:
+            if old_stream:
                 try:
-                    self.master_stream.kill()
-                    await asyncio.wait_for(self.master_stream.wait(), timeout=5)
+                    old_stream.kill()
+                    await asyncio.wait_for(old_stream.wait(), timeout=5)
                 except Exception:
                     pass
+                rc = old_stream.returncode
+                tty_log(f"[FFMPEG] Процесс завершён: код {rc}", "error")
                 self.master_stream = None
 
-            os.system("pkill -9 ezstream 2>/dev/null; pkill -9 -f 'ffmpeg.*pipe:0' 2>/dev/null")
+            os.system(
+                "pkill -9 ezstream 2>/dev/null; pkill -9 -f 'ffmpeg.*pipe:0' 2>/dev/null"
+            )
 
             try:
                 admin_url = f"http://{ICECAST_HOST}:{ICECAST_PORT}/admin/killsource?mount=/djalyx"
-                http_requests.get(admin_url, auth=("admin", ICECAST_ADMIN_PASSWORD), timeout=5)
+                http_requests.get(
+                    admin_url, auth=("admin", ICECAST_ADMIN_PASSWORD), timeout=5
+                )
                 tty_log("[RESTART] Icecast mount освобождён", "info")
             except Exception:
                 pass
@@ -424,31 +443,14 @@ class CyberRadio:
             tty_log("[RESTART] Стрим-пайплайн пересоздан", "info")
         finally:
             self._restarting = False
-            if not self._restart_fails:
-                self._logged_waiting = False
-
-    async def _confirm_stream_healthy(self):
-        stream = self.master_stream
-        await asyncio.sleep(10)
-        if stream and stream.returncode is None and self.master_stream is stream:
-            self._restart_fails = 0
-            self._logged_waiting = False
-            tty_log("[RESTART] Стрим стабилен, счётчик сброшен", "info")
 
     async def _stream_track(self, decoder):
         while True:
-            chunk = await asyncio.wait_for(decoder.stdout.read(4096), timeout=30)
+            chunk = await decoder.stdout.read(65536)
             if not chunk:
-                tty_log("[TRACK] EOF — трек закончился", "info")
                 break
             self.master_stream.stdin.write(chunk)
-            try:
-                await asyncio.wait_for(self.master_stream.stdin.drain(), timeout=10)
-                self._drain_fails = 0
-            except asyncio.TimeoutError:
-                self._drain_fails += 1
-                if self._drain_fails >= 6:
-                    await self._restart_master_stream()
+            await self.master_stream.stdin.drain()
 
     def split_text_to_chunks(self, text, max_chunk_size=150):
         if not text:
@@ -753,6 +755,18 @@ class CyberRadio:
                 await asyncio.sleep(2)
                 return
             self._logged_waiting = False
+            self._restart_fails += 1
+            tty_log(
+                f"[EZSTREAM] Стрим упал (попытка {self._restart_fails}/{MAX_CONSECUTIVE_FAILS})",
+                "error",
+            )
+            if self._restart_fails >= MAX_CONSECUTIVE_FAILS:
+                tty_log(
+                    f"[АВАРИЯ] {MAX_CONSECUTIVE_FAILS} падений стрима подряд — полный рестарт",
+                    "error",
+                )
+                self._restart_all()
+                return
             tty_log("Master-стрим упал, рестарт...", "error")
             await self._restart_master_stream()
             if self.master_stream is None or self.master_stream.returncode is not None:

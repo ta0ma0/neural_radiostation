@@ -5,3 +5,4 @@ f5-tts
 pytest
 pytest-asyncio
 pytest-mock
+discogs-client

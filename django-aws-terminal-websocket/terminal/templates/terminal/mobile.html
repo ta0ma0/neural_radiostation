@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=2.0, user-scalable=yes" />
     <meta name="theme-color" content="#050505" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" href="/static/terminal/icon-192.png" sizes="192x192" />
@@ -18,93 +18,94 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
-            padding: 20px;
+            padding: 40px 24px;
             text-align: center;
         }
         h1 {
-            font-size: 1.8em;
+            font-size: 2.4em;
             letter-spacing: 4px;
-            margin-bottom: 4px;
+            margin-bottom: 2px;
         }
         .sub {
-            color: #003b00;
-            font-size: 0.8em;
-            margin-bottom: 30px;
+            color: #007700;
+            font-size: 1em;
+            margin-bottom: 24px;
         }
         #air-badge {
             display: inline-block;
-            padding: 3px 12px;
-            border-radius: 10px;
-            font-size: 0.7em;
+            padding: 4px 16px;
+            border-radius: 12px;
+            font-size: 0.9em;
             font-weight: bold;
             letter-spacing: 2px;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
         .air-on { background: #00ff41; color: #050505; }
         .air-off { background: #331100; color: #ff4400; }
         .stream-btn {
-            width: 80px;
-            height: 80px;
+            width: 100px;
+            height: 100px;
             border-radius: 50%;
-            border: 3px solid #00ff41;
+            border: 4px solid #00ff41;
             background: transparent;
             color: #00ff41;
-            font-size: 2em;
+            font-size: 2.4em;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 20px auto;
+            margin: 16px auto;
             transition: 0.2s;
             -webkit-tap-highlight-color: transparent;
         }
         .stream-btn.playing {
-            box-shadow: 0 0 30px rgba(0,255,65,0.3);
+            box-shadow: 0 0 40px rgba(0,255,65,0.3);
         }
         .stream-btn:active {
             transform: scale(0.92);
         }
         #now-playing {
             color: #00ff41;
-            font-size: 0.9em;
+            font-size: 1em;
             min-height: 1.4em;
-            margin-top: 10px;
+            margin-top: 6px;
+            max-width: 100%;
+            word-break: break-word;
         }
         #status {
-            color: #003b00;
-            font-size: 0.75em;
-            margin-top: 20px;
+            color: #006600;
+            font-size: 0.85em;
+            margin-top: 16px;
         }
         .listeners {
-            color: #003b00;
-            font-size: 0.7em;
+            color: #00aa44;
+            font-size: 0.85em;
             margin-top: 8px;
         }
         .volume-slider {
             -webkit-appearance: none;
             appearance: none;
-            width: 120px;
-            height: 4px;
+            width: 140px;
+            height: 6px;
             background: #003b00;
-            border-radius: 2px;
+            border-radius: 3px;
             outline: none;
             cursor: pointer;
-            margin: 12px 0;
+            margin: 14px 0;
         }
         .volume-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 14px;
-            height: 14px;
+            width: 18px;
+            height: 18px;
             border-radius: 50%;
             background: #00ff41;
             cursor: pointer;
             border: none;
         }
         .volume-slider::-moz-range-thumb {
-            width: 14px;
-            height: 14px;
+            width: 18px;
+            height: 18px;
             border-radius: 50%;
             background: #00ff41;
             cursor: pointer;
@@ -133,6 +134,10 @@
             navigator.serviceWorker.register('/sw.js');
         }
 
+        function stripAnsi(s) {
+            return s.replace(/\x1b\[[0-9;]*m/g, '');
+        }
+
         const btn = document.getElementById('play-btn');
         const nowPlaying = document.getElementById('now-playing');
         const statusBar = document.getElementById('status');
@@ -143,6 +148,7 @@
 
         function playStream() {
             if (howl) howl.unload();
+            wasOffline = false;
             howl = new Howl({
                 src: [streamUrl()],
                 format: ['mp3'],
@@ -151,10 +157,15 @@
                 onplay: function() {
                     btn.innerHTML = '&#9646;&#9646;';
                     btn.classList.add('playing');
-                    nowPlaying.textContent = 'STATION: ON AIR';
+                    if (nowPlaying.textContent === 'STATION: IDLE') {
+                        nowPlaying.textContent = 'STATION: ON AIR';
+                    }
                     statusBar.textContent = 'connected';
                     statusBar.style.color = '#00ff41';
                     requestWakeLock();
+                },
+                onloaderror: function() {
+                    wasOffline = true;
                 },
             });
             howl.play();
@@ -169,8 +180,12 @@
             ws.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
-                    if (data.track) {
-                        nowPlaying.textContent = 'PLAYING: ' + data.track;
+                    if (data.message) {
+                        const msg = stripAnsi(data.message);
+                        const m = msg.match(/\[ON AIR\]\s*(.+)/);
+                        if (m) {
+                            nowPlaying.textContent = m[1].trim();
+                        }
                     }
                     if (data.listeners !== undefined) {
                         listenersSpan.textContent = data.listeners;
@@ -196,7 +211,6 @@
 
         // Статус вещания — опрос Icecast через Django
         const badge = document.getElementById('air-badge');
-        let offAirSince = null;
         let userDisconnected = false;
 
         let wasOffline = false;
@@ -210,17 +224,15 @@
                 if (s.streaming) {
                     badge.className = 'air-on';
                     badge.textContent = 'ON AIR';
-                    offAirSince = null;
                     listenersSpan.textContent = s.listeners;
                     offlineSince = null;
                     if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
-                    if (wasOffline && howl && !howl.playing() && !userDisconnected) {
+                    if (howl && !howl.playing() && !userDisconnected) {
                         playStream();
                     }
                 } else {
                     badge.className = 'air-off';
                     badge.textContent = 'OFF AIR';
-                    if (!offAirSince) offAirSince = Date.now();
                     if (!userDisconnected && !offlineSince) {
                         offlineSince = Date.now();
                     }
@@ -241,7 +253,7 @@
         setInterval(checkStatus, 15000);
         checkStatus();
 
-        // Wake Lock — не даём экрану гаснуть
+        // Wake Lock
         let wakeLock = null;
         async function requestWakeLock() {
             try {

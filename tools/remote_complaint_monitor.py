@@ -11,8 +11,10 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+RADIO_API = "https://djalyx.2077911.xyz/api/status/"
+LOCAL_IP = "94.25.224.52"
 ICECAST_URL = "http://127.0.0.1:8000"
-COMPLAINT_FILE = "/opt/djalyx/django-aws-terminal-websocket/terminal/static/terminal/complaints/complaint.mp3"
+COMPLAINT_FILE = "/opt/djalyx/django-aws-terminal-websocket/terminal/static/terminal/complaints/ambient_loop.mp3"
 LOG_FILE = "/opt/djalyx/django-aws-terminal-websocket/complaint_monitor.log"
 
 SOURCE_PASS = os.getenv("ICECAST_SOURCE_PASSWORD", "")
@@ -36,13 +38,9 @@ def log(msg):
 
 def check_mount():
     try:
-        resp = urllib.request.urlopen(
-            f"{ICECAST_URL}/status-json.xsl", timeout=5
-        )
+        resp = urllib.request.urlopen(f"{ICECAST_URL}/status-json.xsl", timeout=5)
         data = json.loads(resp.read())
         sources = data.get("icestats", {}).get("source", [])
-        if isinstance(sources, dict):
-            sources = [sources]
         return bool(sources)
     except Exception as e:
         log(f"WARNING] Mount check error: {e}")
@@ -65,7 +63,7 @@ def main():
                     log("INFO] Запуск complaint в Icecast")
                     _complaint_proc = subprocess.Popen(
                         [
-                            "ffmpeg", "-re", "-i", COMPLAINT_FILE,
+                            "ffmpeg", "-re", "-stream_loop", "-1", "-i", COMPLAINT_FILE,
                             "-c:a", "libmp3lame", "-b:a", "64k", "-f", "mp3",
                             f"icecast://source:{SOURCE_PASS}@127.0.0.1:8000/djalyx",
                         ],
@@ -77,8 +75,7 @@ def main():
         else:
             _empty_since = None
             if _complaint_proc is not None:
-                log("INFO] Mount активен, останавливаю complaint")
-                _complaint_proc.kill()
+                log("INFO] Real radio reconnected")
                 _complaint_proc = None
 
         time.sleep(30)

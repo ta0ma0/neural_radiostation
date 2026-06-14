@@ -6,7 +6,7 @@
         <title>DJ ALYX | REMOTE ACCESS</title>
         <link
             rel="stylesheet"
-            href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css"
+            href="/static/terminal/xterm.css"
         />
         <style>
             :root {
@@ -186,7 +186,7 @@
         </div>
 
         <script src="/static/terminal/howler.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+        <script src="/static/terminal/xterm.js"></script>
         <script>
             // === TERMINAL ===
             const term = new Terminal({
@@ -331,9 +331,11 @@
 
             function playStream() {
                 if (howl) howl.unload();
+                wasOffline = false;
                 howl = new Howl({
                     src: [streamUrl()], format: ['mp3'], html5: true,
                     volume: parseFloat(localStorage.getItem('djalyx_volume') || 1),
+                    onloaderror: function() { wasOffline = true; },
                 });
                 howl.play();
             }
@@ -370,7 +372,7 @@
                     el.className = s.streaming ? 'air-on' : 'air-off';
                     document.getElementById('listeners-count').innerText = s.listeners;
                     if (s.streaming) {
-                        if (wasOffline && howl && !howl.playing() && !userDisconnected) playStream();
+                        if (howl && !howl.playing() && !userDisconnected) playStream();
                         offlineSince = null;
                         if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
                     } else {
