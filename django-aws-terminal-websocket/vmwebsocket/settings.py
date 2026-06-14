@@ -166,9 +166,13 @@ HEALTH_CHECK_URL = f"http://{DJANGO_HOST}:8000/health-check/"
 
 # Celery Beat schedule for periodic tasks
 CELERY_BEAT_SCHEDULE = {
-    "health-check-every-minute": {
+    "health-check-every-30s": {
         "task": "terminal.tasks.health_check_task",
-        "schedule": 30,  # 30 seconds
+        "schedule": 30,
+    },
+    "complaint-every-30s": {
+        "task": "terminal.tasks.complaint_task",
+        "schedule": 30,
     },
 }
 

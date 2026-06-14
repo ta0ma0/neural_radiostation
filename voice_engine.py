@@ -1,6 +1,9 @@
 import os
 import subprocess
+import threading
 from datetime import datetime
+
+_tts_lock = threading.Lock()
 
 
 def tty_log(message, style="info"):
@@ -37,41 +40,58 @@ class AlyxVoice:
         tty_log("[*] [System]: Voice Engine инициализирован.")
 
     def generate(self, text, output_path, speed=1.1):
-        # 1. Определяем пути
-        base_path = os.path.splitext(output_path)[0]
-        wav_path = base_path + ".wav"
-        mp3_path = base_path + ".mp3"
-
-        output_dir = os.path.dirname(wav_path)
-        output_filename = os.path.basename(wav_path)
-
-        cmd = [
-            "python",
-            "-m",
-            "f5_tts.infer.infer_cli",
-            "-p",
-            self.model_path,
-            "-r",
-            self.ref_audio,
-            "-s",
-            self.ref_text,
-            "-t",
-            text,
-            "-o",
-            output_dir,
-            "-w",
-            output_filename,
-            "--device",
-            self.device,
-            "--nfe_step",
-            "10",
-            "--speed",
-            str(speed),
-        ]
+        if not _tts_lock.acquire(blocking=False):
+            tty_log("[!] TTS уже занят, пропускаю генерацию", "error")
+            return None
 
         try:
-            # 2. Генерация WAV
-            subprocess.run(cmd, check=True, capture_output=True)
+            # 1. Определяем пути
+            base_path = os.path.splitext(output_path)[0]
+            wav_path = base_path + ".wav"
+            mp3_path = base_path + ".mp3"
+
+            output_dir = os.path.dirname(wav_path)
+            output_filename = os.path.basename(wav_path)
+
+            cmd = [
+                "python",
+                "-m",
+                "f5_tts.infer.infer_cli",
+                "-p",
+                self.model_path,
+                "-r",
+                self.ref_audio,
+                "-s",
+                self.ref_text,
+                "-t",
+                text,
+                "-o",
+                output_dir,
+                "-w",
+                output_filename,
+                "--device",
+                self.device,
+                "--nfe_step",
+                "6",
+                "--speed",
+                str(speed),
+            ]
+
+            # 2. Генерация WAV (Popen чтобы убить при таймауте)
+            nice_cmd = ["nice", "-n", "19"] + cmd
+            proc = subprocess.Popen(nice_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                stdout, stderr = proc.communicate(timeout=300)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+                os.system("pkill -9 -f 'f5_tts.infer.infer_cli' 2>/dev/null")
+                tty_log(f"[!] Таймаут TTS: {text[:50]}...", "error")
+                return None
+
+            if proc.returncode != 0:
+                tty_log(f"[!] Ошибка CLI: {stderr.decode()}")
+                return None
 
             if not os.path.exists(wav_path):
                 return None
@@ -88,13 +108,21 @@ class AlyxVoice:
                 "2",
                 mp3_path,
             ]
-            subprocess.run(conv_cmd, check=True, capture_output=True)
+            conv_proc = subprocess.Popen(conv_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                conv_stdout, conv_stderr = conv_proc.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                conv_proc.kill()
+                conv_proc.wait(timeout=5)
+                tty_log(f"[!] Таймаут ffmpeg конвертации TTS", "error")
+                return None
 
-            # 4. Удаляем исходный WAV
+            if conv_proc.returncode != 0:
+                tty_log(f"[!] Ошибка FFmpeg: {conv_stderr.decode()}")
+                return None
             if os.path.exists(wav_path):
                 os.remove(wav_path)
 
             return mp3_path
-        except subprocess.CalledProcessError as e:
-            tty_log(f"[!] Ошибка CLI или FFmpeg: {e.stderr.decode()}")
-            return None
+        finally:
+            _tts_lock.release()

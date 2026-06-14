@@ -49,4 +49,6 @@ urlpatterns = [
     path("static/terminal/icon-192.png", static_file("icon-192.png", "image/png")),
     path("static/terminal/icon-512.png", static_file("icon-512.png", "image/png")),
     path("static/terminal/howler.min.js", static_file("howler.min.js", "application/javascript")),
+    path("static/terminal/xterm.js", static_file("xterm.js", "application/javascript")),
+    path("static/terminal/xterm.css", static_file("xterm.css", "text/css")),
 ]

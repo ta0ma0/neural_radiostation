@@ -22,7 +22,7 @@ from num2words import num2words
 
 # Сторонние модули
 from ai_connector import generate_dj_speech
-from last_fm import main as search_artist_info
+from tools.discogs_connector import search_artist_info
 from voice_engine import AlyxVoice
 
 # Настройка буферизации для логов
@@ -46,6 +46,25 @@ DB_PATH = os.getenv("DATA_BASE", "")
 if DB_PATH and not os.path.isabs(DB_PATH):
     DB_PATH = os.path.join(PROJECT_DIR, DB_PATH)
 ICECAST_PASSWORD = os.getenv("ICECAST_SOURCE_PASSWORD", "change_me_in_env")
+ICECAST_ADMIN_PASSWORD = os.getenv("ICECAST_ADMIN_PASSWORD", "4MHs7KsM_bPwJSe3")
+ICECAST_HOST = os.getenv("ICECAST_HOST", "132.243.22.20")
+ICECAST_PORT = os.getenv("ICECAST_PORT", "8000")
+
+NET_STATUS_FILE = "/tmp/dj_alyx_network_status"
+
+
+def read_network_status():
+    try:
+        with open(NET_STATUS_FILE) as f:
+            return f.read().strip()
+    except (FileNotFoundError, OSError):
+        return "OK"
+
+
+# --- Защита от runaway restart ---
+MAX_CONSECUTIVE_FAILS = 5
+MIN_RESTART_DELAY = 3
+MAX_RESTART_DELAY = 30
 
 
 def tty_log(message, style="info"):
@@ -72,15 +91,6 @@ def tty_log(message, style="info"):
     print(full_message, flush=True)
 
 
-# Инициализация голоса
-alyx = AlyxVoice(
-    model_path="/home/ruslan/Develop/Voice/f5-tts/f5-tts-model/F5-TTS_RUSSIA/f5-tts-model/F5TTS_Russian/F5TTS_v1_Base_v2/model_last.pt",
-    ref_audio="F5-TTS/rachel.capell_audiobook_16_07_24_short.wav",
-    ref_text="How could he get back his title as the smelliest, stinkiest skunk?",
-    device="cpu",
-)
-
-
 class CyberRadio:
     def __init__(self):
         self.is_running = True
@@ -95,9 +105,33 @@ class CyberRadio:
         self._last_track_end = time.time()
         self._dj_cycle = 0
         self._drain_fails = 0
+        self._restarting = False
+        self._restart_fails = 0
+        self._last_restart_time = 0.0
+        self._news_repeat_count = 0
+        self._last_news_ids = set()
+        self._logged_waiting = False
+        self._tts_model = None
 
         safe_pass = quote(ICECAST_PASSWORD, safe="")
         self.icecast_url = f"icecast://source:{safe_pass}@132.243.22.20:8000/djalyx"
+
+    def _get_tts(self):
+        if self._tts_model is not None:
+            return self._tts_model
+        try:
+            self._tts_model = AlyxVoice(
+                model_path="/home/ruslan/Develop/Voice/f5-tts/f5-tts-model/F5-TTS_RUSSIA/f5-tts-model/F5TTS_Russian/F5TTS_v1_Base_v2/model_last.pt",
+                ref_audio="F5-TTS/rachel.capell_audiobook_16_07_24_short.wav",
+                ref_text="How could he get back his title as the smelliest, stinkiest skunk?",
+                device="cpu",
+            )
+            tty_log("[*] [System]: Voice Engine инициализирован.")
+        except Exception as e:
+            tty_log(f"Ошибка инициализации TTS: {repr(e)}", "error")
+            self._tts_model = None
+        self.tp = 0
+        return self._tts_model
 
     async def get_random_atmospherics(self):
         path = os.path.join(PROJECT_DIR, "Мелодии и ритмы ЭВМ")
@@ -113,12 +147,12 @@ class CyberRadio:
     def _bpm_range(self):
         h = datetime.datetime.now().hour
         if 6 <= h < 12:
-            return (100, 130)
+            return (80, 160)
         if 12 <= h < 18:
-            return (80, 110)
+            return (70, 140)
         if 18 <= h < 23:
-            return (70, 100)
-        return (60, 90)
+            return (60, 120)
+        return (0, 70)
 
     def get_random_track(self):
         try:
@@ -153,6 +187,14 @@ class CyberRadio:
 
     async def start_master_stream(self):
         """Запуск вещания (ffmpeg→ezstream pipeline, опционально FM)"""
+        net = read_network_status()
+        if net == "SHUTDOWN":
+            tty_log("[NET] Сигнал SHUTDOWN, завершение.", "error")
+            os._exit(1)
+        if net == "LOST":
+            tty_log("[NET] Связь потеряна, стрим не стартую.", "error")
+            return
+
         if self.master_stream is not None and self.master_stream.returncode is None:
             return
         tty_log("[*] [System]: Подъем Master-узла вещания...")
@@ -202,19 +244,31 @@ class CyberRadio:
                 stderr=asyncio.subprocess.PIPE,
             )
         else:
-            ez_template = os.path.join(PROJECT_DIR, "tools", "ezstream.xml.template")
-            ez_config = os.path.join(PROJECT_DIR, "tools", "ezstream.xml")
-            with open(ez_template, "r") as f:
-                xml = f.read()
-            xml = xml.replace("__HOSTNAME__", "132.243.22.20")
-            xml = xml.replace("__PORT__", "8000")
-            xml = xml.replace("__PASSWORD__", ICECAST_PASSWORD)
-            with open(ez_config, "w") as f:
-                f.write(xml)
-            os.chmod(ez_config, 0o600)
-            cmd = f"ffmpeg -y -f s16le -ar 44100 -ac 2 -i pipe:0 -f mp3 -b:a 64k - | ezstream -c {ez_config}"
-            self.master_stream = await asyncio.create_subprocess_shell(
-                cmd,
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "s16le",
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                "-i",
+                "pipe:0",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "64k",
+                "-f",
+                "mp3",
+                "-content_type",
+                "audio/mpeg",
+                "-ice_name",
+                "DJ Alyx Neural Radio",
+                self.icecast_url,
+            ]
+            self.master_stream = await asyncio.create_subprocess_exec(
+                *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
@@ -224,11 +278,12 @@ class CyberRadio:
         await asyncio.sleep(2)
 
     async def _monitor_master_stderr(self):
-        if not self.master_stream or not self.master_stream.stderr:
+        stream = self.master_stream
+        if not stream or not stream.stderr:
             return
         while True:
             try:
-                line = await self.master_stream.stderr.readline()
+                line = await stream.stderr.readline()
                 if not line:
                     break
                 text = line.decode("utf-8", errors="ignore").strip()
@@ -238,6 +293,11 @@ class CyberRadio:
                     tty_log(f"[EZSTREAM] {text}", "error")
             except Exception:
                 break
+
+        if self.master_stream is not stream:
+            return
+
+        tty_log(f"[EZSTREAM] Стрим упал", "error")
 
     async def play_single_file(self, track):
         if isinstance(track, str):
@@ -257,6 +317,7 @@ class CyberRadio:
 
         cmd = [
             "ffmpeg",
+            "-re",
             "-i",
             abs_path,
             "-f",
@@ -275,7 +336,14 @@ class CyberRadio:
             await self._stream_track(decoder)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as e:
             tty_log(f"[АВАРИЯ] Соединение потеряно: {repr(e)}", "error")
-            self._restart_all()
+            await asyncio.sleep(1)
+            if self.master_stream:
+                try:
+                    rc = self.master_stream.returncode
+                except Exception:
+                    rc = "?"
+                tty_log(f"[FFMPEG] exit code: {rc}", "error")
+            await self._restart_master_stream()
         except Exception as e:
             tty_log(f"Ошибка трансляции трека: {repr(e)}", "error")
         finally:
@@ -294,26 +362,95 @@ class CyberRadio:
                 pass
 
     def _restart_all(self):
-        tty_log("[АВАРИЯ] Перезапуск всей станции...", "error")
-        import os
-        import sys
+        tty_log("[АВАРИЯ] Полный перезапуск станции...", "error")
+        if self.master_stream:
+            try:
+                self.master_stream.kill()
+            except Exception:
+                pass
+        os.system("pkill -9 ezstream 2>/dev/null")
+        os._exit(1)
 
-        os.system("pkill -9 ezstream 2>/dev/null; pkill -f start_all.py 2>/dev/null")
-        sys.exit(1)
+    async def _restart_master_stream(self):
+        if self._restarting:
+            tty_log("[RESTART] Уже идёт пересоздание стрима, пропускаю", "error")
+            return
+
+        if read_network_status() == "LOST":
+            tty_log("[NET] Связь потеряна, рестарт отложен.", "error")
+            return
+
+        import traceback
+
+        stack = traceback.extract_stack(limit=4)
+        caller = stack[-2] if len(stack) >= 2 else stack[-1]
+        tty_log(
+            f"[RESTART] Вызов из {caller.filename}:{caller.lineno} {caller.name}()",
+            "error",
+        )
+
+        self._restarting = True
+        try:
+            now = time.time()
+            since_last = now - self._last_restart_time
+            if self._restart_fails > 0:
+                delay = min(
+                    MIN_RESTART_DELAY * (2 ** (self._restart_fails - 1)),
+                    MAX_RESTART_DELAY,
+                )
+                if since_last < delay:
+                    wait = delay - since_last
+                    tty_log(
+                        f"[RESTART] Cooldown {wait:.0f}с (попытка {self._restart_fails})",
+                        "error",
+                    )
+                    await asyncio.sleep(wait)
+
+            self._last_restart_time = time.time()
+
+            old_stream = self.master_stream
+            tty_log(
+                f"[RESTART] Пересоздание стрим-пайплайна (попытка {self._restart_fails})...",
+                "error",
+            )
+
+            if old_stream:
+                try:
+                    old_stream.kill()
+                    await asyncio.wait_for(old_stream.wait(), timeout=5)
+                except Exception:
+                    pass
+                rc = old_stream.returncode
+                tty_log(f"[FFMPEG] Процесс завершён: код {rc}", "error")
+                self.master_stream = None
+
+            os.system(
+                "pkill -9 ezstream 2>/dev/null; pkill -9 -f 'ffmpeg.*pipe:0' 2>/dev/null"
+            )
+
+            try:
+                admin_url = f"http://{ICECAST_HOST}:{ICECAST_PORT}/admin/killsource?mount=/djalyx"
+                http_requests.get(
+                    admin_url, auth=("admin", ICECAST_ADMIN_PASSWORD), timeout=5
+                )
+                tty_log("[RESTART] Icecast mount освобождён", "info")
+            except Exception:
+                pass
+
+            await asyncio.sleep(3)
+            await self.start_master_stream()
+            self._drain_fails = 0
+            tty_log("[RESTART] Стрим-пайплайн пересоздан", "info")
+        finally:
+            self._restarting = False
 
     async def _stream_track(self, decoder):
         while True:
-            chunk = await asyncio.wait_for(decoder.stdout.read(16384), timeout=30)
+            chunk = await decoder.stdout.read(65536)
             if not chunk:
                 break
             self.master_stream.stdin.write(chunk)
-            try:
-                await asyncio.wait_for(self.master_stream.stdin.drain(), timeout=120)
-                self._drain_fails = 0
-            except asyncio.TimeoutError:
-                self._drain_fails += 1
-                if self._drain_fails >= 3:
-                    self._restart_all()
+            await self.master_stream.stdin.drain()
 
     def split_text_to_chunks(self, text, max_chunk_size=150):
         if not text:
@@ -405,10 +542,14 @@ class CyberRadio:
             chunks = self.split_text_to_chunks(speech_text)
             speech_files = []
             gen_id = random.randint(1000, 9999)
+            tts = self._get_tts()
+            if tts is None:
+                tty_log("[⚙️ AI] TTS недоступен, пропускаю генерацию речи", "error")
+                return
 
             for i, chunk in enumerate(chunks):
                 p = os.path.join(TEMP_DIR, f"gen_{gen_id}_{i}.mp3")
-                if await loop.run_in_executor(None, alyx.generate, chunk, p):
+                if await loop.run_in_executor(None, tts.generate, chunk, p):
                     speech_files.append({"path": p})
 
             if speech_files:
@@ -457,9 +598,10 @@ class CyberRadio:
 
     async def _news_speech_generator(self):
         db_path = os.path.join(PROJECT_DIR, "tools", "xakep_ru.db")
+        await asyncio.sleep(30)
         while self.is_running:
-            await asyncio.sleep(1)
             if self.news_buffer is not None:
+                await asyncio.sleep(30)
                 continue
             try:
                 conn = sqlite3.connect(db_path)
@@ -477,15 +619,24 @@ class CyberRadio:
                 )
                 rows = c.fetchall()
                 if not rows:
+                    if self._news_repeat_count >= 3:
+                        conn.close()
+                        await asyncio.sleep(900)
+                        continue
                     c.execute(
                         "UPDATE description SET read = 0, read_date = NULL WHERE added_date >= ?",
                         (today_start,),
                     )
+                    self._news_repeat_count += 1
                     conn.commit()
                     conn.close()
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(900)
                     continue
                 ids = [r[0] for r in rows]
+                current_ids = set(ids)
+                if current_ids != self._last_news_ids:
+                    self._news_repeat_count = 0
+                    self._last_news_ids = current_ids
 
                 now = datetime.datetime.now(datetime.timezone.utc)
                 intro = f"Сегодня {self._time_to_words(now)}. "
@@ -513,9 +664,14 @@ class CyberRadio:
                 chunks = self.split_text_to_chunks(speech_text, max_chunk_size=250)
                 speech_files = []
                 gen_id = random.randint(1000, 9999)
+                tts = self._get_tts()
+                if tts is None:
+                    tty_log("[⚙️ AI] TTS недоступен для новостей", "error")
+                    return
+
                 for i, chunk in enumerate(chunks):
                     p = os.path.join(TEMP_DIR, f"news_{gen_id}_{i}.mp3")
-                    if await loop.run_in_executor(None, alyx.generate, chunk, p):
+                    if await loop.run_in_executor(None, tts.generate, chunk, p):
                         speech_files.append({"path": p})
                 if speech_files:
                     conn = sqlite3.connect(db_path)
@@ -532,7 +688,8 @@ class CyberRadio:
                     tty_log(f"Подготовлены новости ({len(rows)} шт)", "ai")
             except Exception as e:
                 tty_log(f"[⚙️ AI] Ошибка генерации новостей: {repr(e)}", "error")
-                await asyncio.sleep(60)
+
+            await asyncio.sleep(900)
 
     async def _track_watchdog(self):
         while self.is_running:
@@ -541,8 +698,8 @@ class CyberRadio:
                 if not self._playing_track and not self.playlist:
                     elapsed = time.time() - self._last_track_end
                     if elapsed > 120:
-                        tty_log("[WATCHDOG] Простой 2 мин — перезапуск", "error")
-                        self._restart_all()
+                        tty_log("[WATCHDOG] Простой 2 мин — перезапуск стрима", "error")
+                        await self._restart_master_stream()
             except Exception:
                 pass
 
@@ -579,14 +736,41 @@ class CyberRadio:
             except Exception as e:
                 tty_log(f"[WATCHDOG] Ошибка цикла: {repr(e)}", "error")
                 await asyncio.sleep(3)
+            await asyncio.sleep(0.5)
 
     async def _radio_cycle(
         self, tracks_played, min_before_dj, music_base, jingle_base, temp_base
     ):
         if self.master_stream is None or self.master_stream.returncode is not None:
+            if read_network_status() == "LOST":
+                if not self._logged_waiting:
+                    tty_log("[NET] Связь потеряна, жду восстановления...", "error")
+                    self._logged_waiting = True
+                await asyncio.sleep(5)
+                return
+            if self._restarting:
+                if not self._logged_waiting:
+                    tty_log("Master-стрим упал, жду рестарта...", "error")
+                    self._logged_waiting = True
+                await asyncio.sleep(2)
+                return
+            self._logged_waiting = False
+            self._restart_fails += 1
+            tty_log(
+                f"[EZSTREAM] Стрим упал (попытка {self._restart_fails}/{MAX_CONSECUTIVE_FAILS})",
+                "error",
+            )
+            if self._restart_fails >= MAX_CONSECUTIVE_FAILS:
+                tty_log(
+                    f"[АВАРИЯ] {MAX_CONSECUTIVE_FAILS} падений стрима подряд — полный рестарт",
+                    "error",
+                )
+                self._restart_all()
+                return
             tty_log("Master-стрим упал, рестарт...", "error")
-            await self.start_master_stream()
-            await asyncio.sleep(2)
+            await self._restart_master_stream()
+            if self.master_stream is None or self.master_stream.returncode is not None:
+                return
 
         if not self.is_generating and not self.speech_buffer:
             future = self.get_random_track()

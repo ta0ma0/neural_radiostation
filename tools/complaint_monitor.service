@@ -1,0 +1,16 @@
+[Unit]
+Description=DJ ALYX Remote Complaint Monitor
+After=network.target icecast2.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/djalyx
+EnvironmentFile=/opt/djalyx/.env
+ExecStart=/usr/bin/python3 /opt/djalyx/tools/remote_complaint_monitor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

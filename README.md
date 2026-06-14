@@ -34,7 +34,7 @@ Development active. Station is online but not 24/7. Schedule is being formed.
 - **Web interface** — xterm.js terminal with live logs, ON AIR badge, volume slider, auto-reconnect
 - **Icecast streaming** — MP3 @ 32-128 kbps via remote Icecast + nginx, listeners bypass home connection
 - **EZstream push** — auto-reconnect on network drops, watchdog restarts on 3 consecutive failures
-- **Fault tolerance** — `_restart_all()` kills all stale processes, `start_all.py` limits restarts 5/hour
+- **Fault tolerance** — network monitor detects packet loss, pauses streaming, progressive restart backoff (5–60 min), full stop after 6 failed attempts
 
 ## Architecture
 
@@ -54,18 +54,64 @@ Local machine                    Remote server
 
 ## Quick Start
 
+### Prerequisites
+
+| Dependency | Purpose | How to check |
+|------------|---------|-------------|
+| Conda env `f5-tts` | TTS voice synthesis (F5-TTS) | `conda run -n f5-tts python -c "import torch"` |
+| LM Studio (port 1234) | LLM commentary (Gemma 4) | `curl http://127.0.0.1:1234/v1/models` |
+| Remote Icecast | Audio streaming backend | `curl https://djalyx.2077911.xyz/api/status/` |
+
+### Start radio (recommended way)
+
 ```bash
-# Start radio station (supervised, auto-restart on crash)
+# 1. Activate conda environment
+conda activate f5-tts
+
+# 2. Start station (supervised, auto-restart on crash)
 python3 start_all.py
 
 # With FM transmitter (HackRF on 95 MHz)
 python3 start_all.py --fm
+```
 
-# Full stop
+> **Note:** If conda is not activated, the radio starts BUT FM will fail (`gnuradio` is not in conda).  
+> Run from **system terminal** (not inside conda) if you don't need FM:
+> ```bash
+> python3 start_all.py          # without FM (TTS works via conda run)
+> python3 start_all.py --fm     # WITH FM (system Python has gnuradio)
+> ```
+
+### Stop / Restart
+
+```bash
+# Graceful stop
 bash tools/shutdown_all.sh
 
 # Full restart (kill everything + fresh start)
 bash tools/restart_all.sh
+```
+
+### Network monitor (auto-started)
+
+`tools/network_monitor.py` runs as a separate process, pings the remote server every 15s:
+- **OK** — normal operation
+- **DEGRADATION** (≥80% loss) — future: reduce bitrate
+- **LOST** (100% loss) — radio pauses, progressive retry: 5→10→10→15→15→60 min
+- After 6 failed LOST attempts — **SHUTDOWN**, radio stops
+
+Logs: `cat tools/network_monitor.log`
+
+### News collection (cron)
+
+News from Xakep.ru are fetched every 30 min via cron:
+
+```bash
+# Manually:
+python3 tools/xakep_xml_parser.py
+
+# Cron (already set up):
+# */30 * * * * cd /path && python3 tools/xakep_xml_parser.py
 ```
 
 ## Recovery
@@ -84,6 +130,8 @@ bash tools/restart_all.sh
 | Stop gracefully | `bash tools/shutdown_all.sh` |
 | Full restart | `bash tools/restart_all.sh` |
 | Collect news | `python3 tools/xakep_xml_parser.py` |
+| View network log | `cat tools/network_monitor.log` |
+| Check stream status | `curl https://djalyx.2077911.xyz/api/status/` |
 | Bump version | `sh tools/bump_version.sh` |
 
 ## Stack
@@ -110,9 +158,10 @@ dj_alyx/
 ├── fm.py                 # GNU Radio FM transmitter (optional)
 ├── tools/
 │   ├── ezstream.xml.template  # ezstream config template
+│   ├── network_monitor.py     # ping-based connectivity monitor
 │   ├── restart_all.sh         # full restart script
 │   ├── shutdown_all.sh        # graceful stop script
-│   ├── xakep_xml_parser.py    # news parser
+│   ├── xakep_xml_parser.py    # news parser (cron: */30)
 │   └── bump_version.sh        # auto-increment VERSION
 ├── django-aws-terminal-websocket/  # Django web service
 │   ├── vmwebsocket/      # Django project
